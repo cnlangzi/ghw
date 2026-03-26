@@ -134,6 +134,6 @@ Review flow:
 
 - Entry: `scripts/index.js` (Node.js, no dependencies)
 - Token: PAT or OAuth Device Flow
-- Auto repos: `~/.openclaw/ghw/auto-repos.json`
+- Auto repos: `~/.openclaw/ghw/config.json`
 - Labels: auto-created on first use
 - Mutual exclusion: only one ghw/* label per PR

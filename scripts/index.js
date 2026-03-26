@@ -18,7 +18,7 @@ const os = require('os');
 
 const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'gtw');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
-const AUTO_REPOS_FILE = path.join(CONFIG_DIR, 'auto-repos.json');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 
 // Ensure config dir
@@ -125,8 +125,8 @@ function getCurrentBranch(cwd) { return git('git branch --show-current', cwd); }
 function getDefaultBranch(cwd) { try { return execSync('git symbolic-ref refs/remotes/origin/HEAD', { encoding: 'utf8' }).trim().split('/').pop(); } catch (e) {} return 'main'; }
 
 // --- Auto repos management ---
-function getAutoRepos() { return readJSON(AUTO_REPOS_FILE) || { repos: [], lastRepo: null }; }
-function saveAutoRepos(data) { writeJSON(AUTO_REPOS_FILE, data); }
+function getConfig() { return readJSON(CONFIG_FILE) || { repos: [], lastRepo: null }; }
+function saveConfig(data) { writeJSON(CONFIG_FILE, data); }
 
 function ensureLabels(token, repo) {
   return Promise.all(
@@ -174,7 +174,7 @@ async function cmdAuth() {
 async function cmdConfig() {
   return {
     ok: true,
-    autoRepos: getAutoRepos().repos,
+    autoRepos: getConfig().repos,
     hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
   };
 }
@@ -182,14 +182,14 @@ async function cmdConfig() {
 // auto: manage repos in automation pool
 async function cmdAuto(args) {
   const sub = args[0];
-  const reposFile = getAutoRepos();
+  const config = getConfig();
 
   if (sub === 'add') {
     const repo = args[1];
     if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw auto add owner/repo');
-    if (!reposFile.repos.includes(repo)) {
-      reposFile.repos.push(repo);
-      saveAutoRepos(reposFile);
+    if (!config.repos.includes(repo)) {
+      config.repos.push(repo);
+      saveConfig(config);
       // Ensure labels exist
       const token = getToken();
       await ensureLabels(token, repo);
@@ -201,14 +201,14 @@ async function cmdAuto(args) {
   if (sub === 'remove') {
     const repo = args[1];
     if (!repo) throw new Error('Usage: /gtw auto remove owner/repo');
-    reposFile.repos = reposFile.repos.filter(r => r !== repo);
-    if (reposFile.lastRepo === repo) reposFile.lastRepo = null;
-    saveAutoRepos(reposFile);
+    config.repos = config.repos.filter(r => r !== repo);
+    if (config.lastRepo === repo) config.lastRepo = null;
+    saveConfig(config);
     return { ok: true, action: 'removed', repo, message: `Removed ${repo} from automation pool` };
   }
 
   if (sub === 'list') {
-    return { ok: true, repos: reposFile.repos, lastRepo: reposFile.lastRepo };
+    return { ok: true, repos: config.repos, lastRepo: config.lastRepo };
   }
 
   throw new Error('Usage: /gtw auto add|remove|list');
@@ -217,13 +217,13 @@ async function cmdAuto(args) {
 // review: fully automatic - pick a repo, find a PR, review it
 async function cmdReview(args) {
   const token = getToken();
-  const reposFile = getAutoRepos();
-  const repos = reposFile.repos;
+  const config = getConfig();
+  const repos = config.repos;
 
   if (!repos.length) throw new Error('No repos in automation pool. Run /gtw auto add owner/repo first');
 
   // Pick repo using round-robin (lastRepo = most recently used)
-  let startIdx = repos.indexOf(reposFile.lastRepo) + 1;
+  let startIdx = repos.indexOf(config.lastRepo) + 1;
   if (startIdx >= repos.length) startIdx = 0;
   const orderedRepos = [...repos.slice(startIdx), ...repos.slice(0, startIdx)];
 
@@ -257,8 +257,8 @@ async function cmdReview(args) {
 
     // Claim: replace ghw/ready -> ghw/wip
     await setLabel(token, repo, targetPr.number, LABELS.WIP);
-    reposFile.lastRepo = repo;
-    saveAutoRepos(reposFile);
+    config.lastRepo = repo;
+    saveConfig(config);
 
     // Get linked issue for context
     let linkedIssue = { title: '', body: '' };
@@ -299,9 +299,9 @@ async function cmdReviewVerdict(args) {
   const m = String(prRef).match(/^#?(\d+)$/);
   if (m) {
     // Need repo from auto-repos
-    const reposFile = getAutoRepos();
-    if (!reposFile.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
-    repo = reposFile.lastRepo;
+    const config = getConfig();
+    if (!config.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
+    repo = config.lastRepo;
     num = parseInt(m[1]);
   } else {
     const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
@@ -454,9 +454,9 @@ async function cmdShow(args) {
   const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
   if (full) { repo = full[1]; num = parseInt(full[2]); }
   else {
-    const reposFile = getAutoRepos();
-    if (!reposFile.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
-    repo = reposFile.lastRepo;
+    const config = getConfig();
+    if (!config.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
+    repo = config.lastRepo;
     num = parseInt(String(prRef).replace('#', ''));
   }
   const data = await apiRequest('GET', `/repos/${repo}/issues/${num}`, token);

@@ -144,7 +144,7 @@ Developer                  Agent                    GitHub
 ```
 ~/.openclaw/ghw/
 ├── token.json       # OAuth access token (0600)
-└── auto-repos.json # Automation pool {"repos": [], "lastRepo": null}
+└── config.json # Automation pool {"repos": [], "lastRepo": null}
 ```
 
 ## Environment Variables
