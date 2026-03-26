@@ -378,39 +378,65 @@ async function prMerge(args) {
 // --- Review ---
 async function getMyLogin(token) { const me = await apiRequest('GET', '/user', token); return me.login; }
 
+// Review checklist items - each must be checked [x] before reviewDone passes
+const REVIEW_ITEMS = [
+  '功能是否符合 Issue 需求描述',
+  '是否有超范围改动',
+  '是否有遗漏内容',
+];
+
+function buildChecklist(commentId) {
+  const items = REVIEW_ITEMS.map(item => `- [ ] ${item}`).join('\n');
+  return `👀 **Review Checklist** by @${commentId}\n\n请逐项检查，完成后标记 [x]：\n\n${items}\n\n---\n_💡 每项都 [x] 才能执行 /ghw review done_`;
+}
+
+function parseChecklist(body) {
+  const lines = body.split('\n');
+  const results = [];
+  for (const line of lines) {
+    const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
+    if (m) results.push({ checked: m[1] === 'x', text: m[2].trim() });
+  }
+  return results;
+}
+
 async function reviewClaim(args) {
   const token = getToken();
   const prRef = args[0];
   const { owner, repo, num } = parseRepoRef(prRef);
   const myLogin = await getMyLogin(token);
   const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-  const existing = comments.find(c => c.user?.login !== myLogin && c.body?.includes('👀'));
+  const existing = comments.find(c => c.user?.login !== myLogin && c.body?.includes('👀') && c.body?.includes('Review Checklist'));
   if (existing) return { ok: true, claimed: false, message: `Already claimed by @${existing.user?.login}`, by: existing.user?.login };
-  const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
-    body: `👀 **Review claimed** by @${myLogin} — I'm on it!\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_`,
-  });
-  return { ok: true, claimed: true, comment: comment.html_url, by: myLogin };
+  const body = buildChecklist(myLogin);
+  const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, { body });
+  return { ok: true, claimed: true, comment: comment.html_url, by: myLogin, checklist: REVIEW_ITEMS };
 }
 
 async function reviewDone(args) {
   const token = getToken();
   const verdict = args[1] || 'approved';
-  const emoji = verdict === 'approved' ? '✅' : '❌';
-  const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
   const { owner, repo, num } = parseRepoRef(args[0]);
   const myLogin = await getMyLogin(token);
   const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-  for (const c of comments) {
-    if (c.user?.login === myLogin && c.body?.includes('👀')) {
-      await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${c.id}`, token);
-      break;
-    }
+  const myChecklist = comments.find(c => c.user?.login === myLogin && c.body?.includes('Review Checklist'));
+  if (!myChecklist) throw new Error('No review checklist found. Run /ghw review claim first');
+  const items = parseChecklist(myChecklist.body);
+  if (!items.length) throw new Error('Checklist not found in comment body');
+  const unchecked = items.filter(i => !i.checked);
+  if (unchecked.length > 0) {
+    const list = unchecked.map(i => `  - ${i.text}`).join('\n');
+    throw new Error(`Review incomplete. Items not checked:\n${list}\n\n请完成所有检查项后再运行 review done`);
   }
+  // Delete the checklist comment
+  await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${myChecklist.id}`, token);
+  const emoji = verdict === 'approved' ? '✅' : '❌';
+  const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
   const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
     body: `${emoji} **Review complete** by @${myLogin} — ${verdict === 'approved' ? 'approves' : 'requests changes'}\n\n_Emoji: ✅ = can merge, ❌ = needs changes_`,
   });
   await apiRequest('POST', `/repos/${owner}/${repo}/pulls/${num}/reviews`, token, { body: `${emoji} ${verdict}`, event: reviewState });
-  return { ok: true, verdict, comment: comment.html_url, by: myLogin };
+  return { ok: true, verdict, comment: comment.html_url, by: myLogin, allChecked: true };
 }
 
 async function reviewList(args) {
