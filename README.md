@@ -134,7 +134,7 @@ Developer                  Agent                    GitHub
    |  (code changes)        |                        |
    |                        |                        |
    |                        |-- /ghw review #<pr> ->|
-   |                        |   approved|revise     |
+   |                        |   lgtm|revise     |
    |                        |-- ghw/lgtm/ghw/revise ->|
    |                        |                        |
 ```

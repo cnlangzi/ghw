@@ -269,8 +269,8 @@ async function cmdReview(args) {
       pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url, user: targetPr.user?.login, state: targetPr.state },
       linkedIssue,
       files: files.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, patch: f.patch })),
-      verdictNeeded: `/ghw review #${targetPr.number} approved   # or revise`,
-      message: `ghw/wip Claimed PR #${targetPr.number}: ${targetPr.title}\n\nLinked Issue: ${linkedIssue.title || 'none'}\n\nFiles changed (${files.length}):\n${filesSummary}\n\nReview the diff and issue, then call:\n/ghw review #${targetPr.number} approved   # or revise`,
+      verdictNeeded: `/ghw review #${targetPr.number} lgtm   # or revise`,
+      message: `ghw/wip Claimed PR #${targetPr.number}: ${targetPr.title}\n\nLinked Issue: ${linkedIssue.title || 'none'}\n\nFiles changed (${files.length}):\n${filesSummary}\n\nReview the diff and issue, then call:\n/ghw review #${targetPr.number} lgtm   # or revise`,
     };
   }
 
@@ -281,7 +281,7 @@ async function cmdReview(args) {
 async function cmdReviewVerdict(args) {
   const token = getToken();
   const prRef = args[0]; // "#45" or "45" or "owner/repo#45"
-  const verdict = args[1]; // "approved" or "revise"
+  const verdict = args[1]; // "lgtm" or "revise"
 
   let repo, num;
   const m = String(prRef).match(/^#?(\d+)$/);
@@ -293,20 +293,13 @@ async function cmdReviewVerdict(args) {
     num = parseInt(m[1]);
   } else {
     const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
-    if (!full) throw new Error('Usage: /ghw review #<pr> approved|revise');
+    if (!full) throw new Error('Usage: /ghw review #<pr> lgtm|revise');
     repo = full[1]; num = parseInt(full[2]);
   }
-
-  const newLabel = verdict === 'approved' ? LABELS.LGTM : LABELS.REVISE;
-  const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
-
-  // Update label
+  const newLabel = verdict === 'lgtm' ? LABELS.LGTM : verdict === 'revise' ? LABELS.REVISE : LABELS.REVISE;
   await setLabel(token, repo, num, newLabel);
 
-  // Submit GitHub review
-  await apiRequest('POST', `/repos/${repo}/pulls/${num}/reviews`, token, { body: verdict, event: reviewState });
-
-  const emoji = verdict === 'approved' ? 'ghw/lgtm' : 'ghw/revise';
+  const emoji = verdict === 'lgtm' ? 'ghw/lgtm' : verdict === 'revise' ? 'ghw/revise' : 'ghw/revise';
   return { ok: true, verdict, label: newLabel, pr: num, repo, message: `${emoji} Review complete for PR #${num} in ${repo}` };
 }
 

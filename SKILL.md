@@ -66,7 +66,7 @@ Only one `ghw/*` label can exist on a PR at a time.
     ghw/ready PR, claim it (replace ghw/ready -> ghw/wip), return PR
     details and diff for agent review.
 
-/ghw review #<pr> approved|revise
+/ghw review #<pr> lgtm|revise
     Submit review verdict on the PR:
     - approved  -> ghw/wip -> ghw/lgtm, submit APPROVED review
     - revise    -> ghw/wip -> ghw/revise, submit CHANGES_REQUESTED review
@@ -76,7 +76,7 @@ Review flow:
 1. ghw/ready PR created by developer
 2. /ghw review -> agent picks it up, sets ghw/wip
 3. Agent reviews diff + linked issue
-4. /ghw review #<pr> approved|revise -> updates label + submits review
+4. /ghw review #<pr> lgtm|revise -> updates label only
 5. Developer fixes -> re-adds ghw/ready -> loop
 
 ### Git Operations
