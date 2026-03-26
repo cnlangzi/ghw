@@ -96,8 +96,8 @@ Resolves the git remote from a local directory and writes it to `wip.json`. All 
 
 ```bash
 # Examples
+/ghw start ~/code/myproject
 /ghw start /Users/name/code/myproject
-/ghw start /absolute/path/to/repo
 ```
 
 ---
@@ -228,7 +228,7 @@ Shows current configuration, token status, and `wip.json` contents.
 ## Workflow Example
 
 ```
-You: /ghw start /Users/name/code/myproject
+You: /ghw start ~/code/myproject
 Agent: workdir set, repo: cnlangzi/myproject
 
 You: /ghw new

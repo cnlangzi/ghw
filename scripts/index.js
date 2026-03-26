@@ -153,8 +153,10 @@ function parseChecklist(comments, login) {
 async function cmdStart(args) {
   const workdir = args[0];
   if (!workdir) throw new Error('Usage: /ghw start <workdir>');
-  const absWorkdir = path.isAbsolute(workdir) ? workdir : path.join(process.cwd(), workdir);
-  if (!path.isAbsolute(workdir)) throw new Error('Please use an absolute path, e.g. /Users/name/code/myproject');
+  // Expand ~ to home directory
+  const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
+  const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
+  if (!path.isAbsolute(absWorkdir)) throw new Error('Please use an absolute path, e.g. /Users/name/code/myproject or ~/code/myproject');
   if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
   const repo = getRemoteRepo(absWorkdir);
   const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
