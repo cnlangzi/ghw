@@ -70,18 +70,16 @@ GitHub 团队协作工作流 skill，支持多仓库。
 /ghw pr merge <pr-url-or-number>       # 需满足最少 approval 数量
 ```
 
-### Review（Emoji + Checklist 协议）
+### Review（两步流程 + Checklist）
 
 ```
 /ghw review claim <pr-url-or-number>
-    留下 👀 + 审查清单，逐项检查后标记 [x]：
-    - [ ] 功能是否符合 Issue 需求描述
-    - [ ] 是否有超范围改动
-    - [ ] 是否有遗漏内容
+    留下 👀 认领 PR，附上清单模板（[ ] 状态）。
+    人工开始 review，随时在 comment 中把 [ ] 改成 [x]。
 
 /ghw review done <pr-url-or-number> [approved|changes]
-    检查清单是否全部 [x]，通过则：
-    - 删除清单 comment
+    检查所有清单项是否全部 [x]，通过则：
+    - 删除所有认领 comment
     - 留下 ✅ / ❌ 结论 comment
     - 提交 GitHub Official Review
 
@@ -89,11 +87,24 @@ GitHub 团队协作工作流 skill，支持多仓库。
     列出所有待 Review PR（👀 已认领 / 待认领）
 ```
 
+**Emoji 含义**：
+- 👀 = 有人正在 Review（认领标志）
+- ✅ = 可 Merge
+- ❌ = 需修改，打回
+
+**Review 清单项**：
+```
+## Review Checklist
+- [ ] 功能是否符合 Issue 需求描述
+- [ ] 是否有超范围改动
+- [ ] 是否有遗漏内容
+```
+
 **流程说明**：
-1. `review claim` → 领取 PR，留下审查清单
-2. 对照清单逐项检查，在 comment 中把 `[ ]` 改成 `[x]`
+1. `review claim` → 领取 PR，留下 👀 + 清单模板
+2. 人工逐项检查，在 comment 中将 `[ ]` 改为 `[x]`（可多次更新同一 comment）
 3. 全部 [x] 后 → `review done` → 通过
-4. 有问题 → 留言具体修改意见，不用 `review done`，等 Developer 修完再重新 `review claim`
+4. 有问题 → 留言具体修改意见（不用 `review done`），等 Developer 修完 → 重新 `review claim`
 
 **Emoji 含义**：
 - 👀 = 有人正在 Review（认领标志）

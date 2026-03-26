@@ -379,25 +379,31 @@ async function prMerge(args) {
 async function getMyLogin(token) { const me = await apiRequest('GET', '/user', token); return me.login; }
 
 // Review checklist items - each must be checked [x] before reviewDone passes
+// Review checklist items - all must be [x] before reviewDone passes
 const REVIEW_ITEMS = [
   '功能是否符合 Issue 需求描述',
   '是否有超范围改动',
   '是否有遗漏内容',
 ];
 
-function buildChecklist(commentId) {
-  const items = REVIEW_ITEMS.map(item => `- [ ] ${item}`).join('\n');
-  return `👀 **Review Checklist** by @${commentId}\n\n请逐项检查，完成后标记 [x]：\n\n${items}\n\n---\n_💡 每项都 [x] 才能执行 /ghw review done_`;
+// buildChecklist returns the checklist text for user to paste/update in comments
+function buildChecklist() {
+  const items = REVIEW_ITEMS.map(item => `  - [ ] ${item}`).join('\n');
+  return `## Review Checklist\n\n请逐项检查，完成后标记 [x]：\n\n${items}\n\n---\n_💡 全部 [x] 后执行 /ghw review done_`;
 }
 
-function parseChecklist(body) {
-  const lines = body.split('\n');
-  const results = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
-    if (m) results.push({ checked: m[1] === 'x', text: m[2].trim() });
+// Scan all my comments for checklist items across the PR thread
+function parseChecklistFromComments(comments, myLogin) {
+  const myComments = comments.filter(c => c.user?.login === myLogin);
+  const allItems = [];
+  for (const c of myComments) {
+    const lines = c.body.split('\n');
+    for (const line of lines) {
+      const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
+      if (m) allItems.push({ checked: m[1] === 'x', text: m[2].trim(), commentId: c.id });
+    }
   }
-  return results;
+  return allItems;
 }
 
 async function reviewClaim(args) {
@@ -406,11 +412,16 @@ async function reviewClaim(args) {
   const { owner, repo, num } = parseRepoRef(prRef);
   const myLogin = await getMyLogin(token);
   const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-  const existing = comments.find(c => c.user?.login !== myLogin && c.body?.includes('👀') && c.body?.includes('Review Checklist'));
-  if (existing) return { ok: true, claimed: false, message: `Already claimed by @${existing.user?.login}`, by: existing.user?.login };
-  const body = buildChecklist(myLogin);
-  const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, { body });
-  return { ok: true, claimed: true, comment: comment.html_url, by: myLogin, checklist: REVIEW_ITEMS };
+  // Block if someone else already claimed
+  const existingOther = comments.find(c => c.user?.login !== myLogin && c.body?.includes('👀'));
+  if (existingOther) return { ok: true, claimed: false, message: `Already claimed by @${existingOther.user?.login}`, by: existingOther.user?.login };
+  // Check if I already claimed
+  const existingMine = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
+  if (existingMine) return { ok: true, claimed: false, message: `You already claimed this PR`, by: myLogin, comment: existingMine.html_url };
+  const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
+    body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n---\n${buildChecklist()}`,
+  });
+  return { ok: true, claimed: true, comment: comment.html_url, by: myLogin, checklist: buildChecklist() };
 }
 
 async function reviewDone(args) {
@@ -419,17 +430,22 @@ async function reviewDone(args) {
   const { owner, repo, num } = parseRepoRef(args[0]);
   const myLogin = await getMyLogin(token);
   const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-  const myChecklist = comments.find(c => c.user?.login === myLogin && c.body?.includes('Review Checklist'));
-  if (!myChecklist) throw new Error('No review checklist found. Run /ghw review claim first');
-  const items = parseChecklist(myChecklist.body);
-  if (!items.length) throw new Error('Checklist not found in comment body');
+  // Find my claim comment with 👀
+  const myClaim = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
+  if (!myClaim) throw new Error('No review claim found. Run /ghw review claim first');
+  // Find all checklist items across my comments
+  const items = parseChecklistFromComments(comments, myLogin);
+  if (!items.length) throw new Error('No checklist items found in your comments');
   const unchecked = items.filter(i => !i.checked);
   if (unchecked.length > 0) {
-    const list = unchecked.map(i => `  - ${i.text}`).join('\n');
-    throw new Error(`Review incomplete. Items not checked:\n${list}\n\n请完成所有检查项后再运行 review done`);
+    const list = unchecked.map(i => `  - [ ] ${i.text}`).join('\n');
+    throw new Error(`Review incomplete. Items not checked:\n${list}\n\n请在 comment 中将 [ ] 改为 [x] 后再运行 review done`);
   }
-  // Delete the checklist comment
-  await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${myChecklist.id}`, token);
+  // Delete all my claim/comment threads
+  const myComments = comments.filter(c => c.user?.login === myLogin);
+  for (const c of myComments) {
+    await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${c.id}`, token);
+  }
   const emoji = verdict === 'approved' ? '✅' : '❌';
   const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
   const comment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
@@ -438,6 +454,7 @@ async function reviewDone(args) {
   await apiRequest('POST', `/repos/${owner}/${repo}/pulls/${num}/reviews`, token, { body: `${emoji} ${verdict}`, event: reviewState });
   return { ok: true, verdict, comment: comment.html_url, by: myLogin, allChecked: true };
 }
+
 
 async function reviewList(args) {
   const token = getToken();
