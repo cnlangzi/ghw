@@ -130,10 +130,14 @@ function getDefaultBranch(cwd) {
 }
 
 // --- Review checklist ---
-const REVIEW_ITEMS = ['功能是否符合 Issue 需求描述', '是否有超范围改动', '是否有遗漏内容'];
+const REVIEW_ITEMS = [
+  'Does the implementation match the Issue requirements?',
+  'Are there any out-of-scope changes?',
+  'Are there any missing pieces?',
+];
 
 function buildChecklist() {
-  return '## Review Checklist\n\n请逐项检查，完成后标记 [x]：\n\n' + REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n') + '\n\n---\n_💡 全部 [x] 后执行 /ghw review d_';
+  return '## Review Checklist\n\nCheck each item. Mark [x] when verified:\n\n' + REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n') + '\n\n---\n_💡 Run /ghw review d after all items are [x]_';
 }
 
 function parseChecklist(comments, login) {
@@ -321,7 +325,7 @@ async function cmdReview(args) {
   return {
     ok: true, claimed: true, pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url },
     comment: claimComment.html_url, repo,
-    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nReview the code, update the checklist [ ] → [x] in the comment, then run /ghw review d ${targetPr.number}`
+    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nReview the code, update the checklist [ ] -> [x] in the comment, then run /ghw review d ${targetPr.number}`
   };
 }
 

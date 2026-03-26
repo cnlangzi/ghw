@@ -6,15 +6,15 @@ metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 
 # github-work (ghw)
 
-GitHub 团队协作工作流 skill。Session-based 设计：草稿写入 pending，确认后执行。
+GitHub team collaboration workflow skill. Session-based design: drafts go to wip.json, confirm before executing.
 
-## 调用方式
+## Usage
 
 ```
 /ghw <command> [args]
 ```
 
-## 配置
+## Configuration
 
 ```json
 "skills": {
@@ -31,44 +31,42 @@ GitHub 团队协作工作流 skill。Session-based 设计：草稿写入 pending
 }
 ```
 
-- `GHW_WORK_DIR`：本地代码根目录（默认 `~/code`）
+- `GHW_WORK_DIR`: Local code root directory (default: `~/code`)
 
 ---
 
-## 命令体系
+## Command Reference
 
-### 工作流命令
+### Workflow Setup
 
 ```
 /ghw start <workdir>
 ```
-从本地目录获取 git remote repo，写入 pending。
-- `workdir` 可以是绝对路径或相对于 `GHW_WORK_DIR` 的路径
+Resolves git remote from a local directory and writes it to wip.json. All subsequent commands use this repo.
 
 ```
 /ghw new
 ```
-LLM 提炼聊天内容 → 生成 Issue 草稿（title + body）→ 写入 pending（不执行 GitHub 操作）
+LLM reads the conversation, generates an Issue draft (title + body), and writes it to wip.json. No GitHub API call.
 
 ```
 /ghw update #<id>
 ```
-LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
+LLM re-reads the conversation to update Issue #<id>'s draft in wip.json.
 
 ```
 /ghw confirm
 ```
-执行 pending 中所有操作：
-- `issue.action == 'create'` → 创建 Issue
-- `issue.action == 'update'` → 更新 Issue
-- `branch.name` 有值 → 创建分支（关联 issue label）
-- `pr.title` 有值 → 创建 PR（关联 issue）
-
-执行后自动清空 pending。
+Executes all pending operations in wip.json:
+- `issue.action == 'create'` -> creates Issue
+- `issue.action == 'update'` -> updates Issue
+- `branch.name` is set -> creates branch (linked to issue)
+- `pr.title` is set -> creates Pull Request (linked to issue)
+After execution, wip.json is cleared.
 
 ---
 
-### Git 操作
+### Git Operations
 
 ```
 /ghw fix [name]
@@ -76,24 +74,23 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 - `git fetch origin`
 - `git checkout main`
 - `git pull --rebase origin main`
-- `git checkout -b <name>`（默认 `fix/<timestamp>`）
-- 结果写入 pending.branch
+- `git checkout -b <name>` (default: `fix/<timestamp>`)
+Result written to wip.json.branch.
 
 ```
 /ghw pr
 ```
 - `git push -u origin <branch>`
-- 生成 PR title/body（关联 issue）
-- 结果写入 pending.pr
-- 需要先 `fix` 创建分支
+- Generates PR title/body (linked to issue)
+- Result written to wip.json.pr — execute with `/ghw confirm`
 
 ```
 /ghw push
 ```
 - `git add -A`
-- 展示 staged changes 摘要
-- 等待 commit message（由 agent LLM 生成）
-- `git commit` + `git push`
+- Shows staged changes summary
+- LLM generates a [Conventional Commits](https://www.conventionalcommits.org/) formatted commit message
+- `git commit && git push`
 
 ---
 
@@ -102,32 +99,42 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 ```
 /ghw review
 ```
-从 pending.repo 找最早未认领的 PR，立即 👀 claim → 写入 checklist → 返回待 review 状态
+From wip.json's repo, finds the earliest unclaimed open PR and immediately:
+1. Posts a 👀 claim comment (prevents other reviewers from picking it up)
+2. Attaches a review checklist
+
+**Review Checklist** (written to the PR comment):
+```
+## Review Checklist
+- [ ] Does the implementation match the Issue requirements?
+- [ ] Are there any out-of-scope changes?
+- [ ] Are there any missing pieces?
+```
+During review, manually update `[ ]` -> `[x]` as you verify each item.
 
 ```
 /ghw review d <pr-ref> [approved|changes]
 ```
-完成 Review：
-- 检查所有 checklist 项是否 [x]
-- 未全部 [x] → 报错返回未完成项
-- 全部 [x] → 删除 claim comment → 提交 ✅/❌ Review
+Completes the review:
+- If not all items are `[x]` -> error listing unchecked items
+- If all checked -> deletes claim comment, posts ✅/❌ verdict, submits GitHub Official Review
 
 ---
 
-### 信息查询
+### Information
 
 ```
-/ghw issue              # 列出 pending.repo 的 open Issue
-/ghw show #<id>         # 查看 pending.repo 的 Issue #id
-/ghw poll               # 轮询所有 repo（new issues / unclaimed PRs / merge-ready PRs）
-/ghw config             # 查看当前配置和 pending 状态
+/ghw issue              # Lists open issues in current repo (from wip.json)
+/ghw show #<id>         # Shows Issue #<id> details
+/ghw poll               # Polls all repos for new issues and unclaimed PRs
+/ghw config            # Shows config and wip.json contents
 ```
 
 ---
 
-## Pending 状态
+## wip.json Schema
 
-文件：`~/.openclaw/github-work/wip.json`
+File: `~/.openclaw/github-work/wip.json`
 
 ```json
 {
@@ -142,41 +149,35 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 
 ---
 
-## 标准流程示例
+## Standard Workflow
 
 ```
-你: /ghw start ~/code/myproject
-蛋妹: ✅ workdir set, repo: owner/repo
+You: /ghw start ~/code/myproject
+Agent: workdir set, repo: owner/repo
 
-你: /ghw new
-蛋妹: 根据聊天内容生成 Issue 草稿：
-      Title: xxx
-      Body: ...
-      [pending，等待 /ghw confirm]
-      确认吗？
+You: /ghw new
+Agent: Generates Issue draft:
+       Title: xxx
+       Body: ...
+       [wip.json — run /ghw confirm]
 
-你: y（继续讨论补充细节）
+You: /ghw fix login-bug
+Agent: Branch fix/login-bug created (rebased on main)
+       [wip.json — run /ghw confirm]
 
-你: /ghw new（再次调用，内容已更新）
-蛋妹: 更新草稿：[新 Title]
-      [pending，等待 /ghw confirm]
+You: /ghw pr
+Agent: Branch pushed. Run /ghw confirm
 
-你: /ghw fix login-bug
-蛋妹: ✅ Branch fix/login-bug created (rebased on main)
-      [pending，等待 /ghw confirm]
-
-你: /ghw pr
-蛋妹: ✅ Branch pushed. Run /ghw confirm
-
-你: /ghw confirm
-蛋妹: ✅ Issue #45 创建成功
-      ✅ Branch created
-      ✅ PR #78 创建成功
+You: /ghw confirm
+Agent: Issue #45 created
+       Branch created
+       PR #78 created
+       [wip.json cleared]
 ```
 
 ---
 
-## Cron 配置
+## Cron Configuration
 
 ```json
 "cron": {
@@ -192,10 +193,10 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 
 ---
 
-## 实现
+## Implementation
 
-- **Token**：PAT 或 OAuth Device Flow
-- **Git 操作**：直接调用本地 git
-- **GitHub API**：REST API v3
-- **存储**：`~/.openclaw/github-work/wip.json`（0600）
-- **零外部依赖**
+- **Token**: PAT or OAuth Device Flow
+- **Git**: Direct local git command execution
+- **GitHub API**: REST API v3
+- **Storage**: `~/.openclaw/github-work/wip.json` (0600)
+- **Dependencies**: None (pure Node.js built-ins only)
