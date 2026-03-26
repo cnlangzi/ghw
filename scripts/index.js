@@ -22,8 +22,6 @@ const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const ACCESS_TOKEN = process.env.GITHUB_ACCESS_TOKEN || '';
-const APPROVAL_COUNT = parseInt(process.env.GHW_APPROVAL_COUNT || '1', 10);
-const REVIEW_TIMEOUT_HOURS = parseInt(process.env.GHW_REVIEW_TIMEOUT_HOURS || '24', 10);
 
 // --- GitHub API ---
 function apiRequest(method, endpoint, token, body = null) {
@@ -422,7 +420,6 @@ async function cmdPoll(args) {
       const approvals = reviews.filter(r => r.state === 'APPROVED').length;
       const hasClaim = comments.some(c => c.body?.includes('👀') && c.user?.login !== myLogin);
       if (!hasClaim) results.claimedPRs.push({ number: pr.number, title: pr.title, url: pr.html_url, by: pr.user?.login, repo });
-      if (approvals >= APPROVAL_COUNT) results.mergeReady.push({ number: pr.number, title: pr.title, url: pr.html_url, repo });
     }
   }
 
@@ -439,8 +436,6 @@ async function cmdConfig(args) {
     ok: true,
     repos: REPOS,
     workDir: process.cwd(),
-    approvalCount: APPROVAL_COUNT,
-    reviewTimeoutHours: REVIEW_TIMEOUT_HOURS,
     hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
     wip: readJSON(wip_FILE) || null,
   };

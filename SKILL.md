@@ -191,6 +191,7 @@ Agent: Issue #45 created
 
 ## Implementation
 
+- **Entry**: `scripts/index.js` (Node.js, no npm dependencies)
 - **Token**: PAT or OAuth Device Flow
 - **Git**: Direct local git command execution
 - **GitHub API**: REST API v3

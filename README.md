@@ -24,16 +24,27 @@ cd ghw
 
 ### 2. Install the skill
 
-Copy or symlink the skill to your OpenClaw workspace:
+The skill follows the OpenClaw AgentSkills directory structure:
+
+```
+github-work/     <- skill directory (name used as /ghw slash command)
+├── SKILL.md     <- this file
+├── README.md
+├── scripts/
+│   └── index.js <- executable entry point
+└── references/
+```
+
+Copy or symlink to your OpenClaw workspace:
 
 ```bash
-cp -r . ~/workspace/skills/github-work/
+cp -r github-work ~/workspace/skills/
 ```
 
 Or use the OpenClaw CLI:
 
 ```bash
-openclaw skills install ./ghw
+openclaw skills install ./github-work
 ```
 
 ### 3. Configure credentials
@@ -260,10 +271,18 @@ Agent: eyes Claimed PR #78: Add OAuth login support
 ## Architecture
 
 ```
-~/.openclaw/github-work/
+~/.openclaw/github-work/          # Runtime state (skill creates this)
 ├── wip.json      # Work In Progress draft state
 ├── token.json    # OAuth access token (0600)
 └── state.json    # Optional persistent state
+
+skill directory structure:
+github-work/
+├── SKILL.md       # This file
+├── README.md
+├── scripts/
+│   └── index.js   # Executable entry point
+└── references/
 ```
 
 ### `wip.json` schema
