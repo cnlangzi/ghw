@@ -10,7 +10,7 @@ const https = require('https');
 const { execSync } = require('child_process');
 const os = require('os');
 
-const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'github-work');
+const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'ghw');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
 const wip_FILE = path.join(CONFIG_DIR, 'wip.json');
 
