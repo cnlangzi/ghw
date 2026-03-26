@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ghw - GitHub team workflow automation
+ * ghw - Git Team Workflow automation
  * Auto-driven PR review with label-based state machine
  *
  * Labels (ghw/*):
@@ -16,7 +16,7 @@ const https = require('https');
 const { execSync } = require('child_process');
 const os = require('os');
 
-const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'ghw');
+const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'gtw');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
 const AUTO_REPOS_FILE = path.join(CONFIG_DIR, 'auto-repos.json');
 const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
@@ -74,7 +74,7 @@ function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, nul
 function getToken() {
   if (ACCESS_TOKEN) return ACCESS_TOKEN;
   const t = readJSON(TOKEN_FILE);
-  if (!t?.access_token) throw new Error('Not authenticated. Run /ghw auth or set GITHUB_ACCESS_TOKEN');
+  if (!t?.access_token) throw new Error('Not authenticated. Run /gtw auth or set GITHUB_ACCESS_TOKEN');
   return t.access_token;
 }
 function saveToken(t) { writeJSON(TOKEN_FILE, t); }
@@ -157,7 +157,7 @@ async function setLabel(token, repo, prNumber, newLabel) {
 
 async function cmdOn(args) {
   const workdir = args[0];
-  if (!workdir) throw new Error('Usage: /ghw on <workdir>');
+  if (!workdir) throw new Error('Usage: /gtw on <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
@@ -186,7 +186,7 @@ async function cmdAuto(args) {
 
   if (sub === 'add') {
     const repo = args[1];
-    if (!repo || !repo.includes('/')) throw new Error('Usage: /ghw auto add owner/repo');
+    if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw auto add owner/repo');
     if (!reposFile.repos.includes(repo)) {
       reposFile.repos.push(repo);
       saveAutoRepos(reposFile);
@@ -200,7 +200,7 @@ async function cmdAuto(args) {
 
   if (sub === 'remove') {
     const repo = args[1];
-    if (!repo) throw new Error('Usage: /ghw auto remove owner/repo');
+    if (!repo) throw new Error('Usage: /gtw auto remove owner/repo');
     reposFile.repos = reposFile.repos.filter(r => r !== repo);
     if (reposFile.lastRepo === repo) reposFile.lastRepo = null;
     saveAutoRepos(reposFile);
@@ -211,7 +211,7 @@ async function cmdAuto(args) {
     return { ok: true, repos: reposFile.repos, lastRepo: reposFile.lastRepo };
   }
 
-  throw new Error('Usage: /ghw auto add|remove|list');
+  throw new Error('Usage: /gtw auto add|remove|list');
 }
 
 // review: fully automatic - pick a repo, find a PR, review it
@@ -220,7 +220,7 @@ async function cmdReview(args) {
   const reposFile = getAutoRepos();
   const repos = reposFile.repos;
 
-  if (!repos.length) throw new Error('No repos in automation pool. Run /ghw auto add owner/repo first');
+  if (!repos.length) throw new Error('No repos in automation pool. Run /gtw auto add owner/repo first');
 
   // Pick repo using round-robin (lastRepo = most recently used)
   let startIdx = repos.indexOf(reposFile.lastRepo) + 1;
@@ -281,8 +281,8 @@ async function cmdReview(args) {
       pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url, user: targetPr.user?.login, state: targetPr.state },
       linkedIssue,
       files: files.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, patch: f.patch })),
-      verdictNeeded: `/ghw review #${targetPr.number} lgtm   # or revise`,
-      message: `ghw/wip Claimed PR #${targetPr.number}: ${targetPr.title}\n\nLinked Issue: ${linkedIssue.title || 'none'}\n\nFiles changed (${files.length}):\n${filesSummary}\n\nReview the diff and issue, then call:\n/ghw review #${targetPr.number} lgtm   # or revise`,
+      verdictNeeded: `/gtw review #${targetPr.number} lgtm   # or revise`,
+      message: `ghw/wip Claimed PR #${targetPr.number}: ${targetPr.title}\n\nLinked Issue: ${linkedIssue.title || 'none'}\n\nFiles changed (${files.length}):\n${filesSummary}\n\nReview the diff and issue, then call:\n/gtw review #${targetPr.number} lgtm   # or revise`,
     };
   }
 
@@ -300,12 +300,12 @@ async function cmdReviewVerdict(args) {
   if (m) {
     // Need repo from auto-repos
     const reposFile = getAutoRepos();
-    if (!reposFile.lastRepo) throw new Error('No repo context. Run /ghw review first to pick a repo');
+    if (!reposFile.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
     repo = reposFile.lastRepo;
     num = parseInt(m[1]);
   } else {
     const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
-    if (!full) throw new Error('Usage: /ghw review #<pr> lgtm|revise');
+    if (!full) throw new Error('Usage: /gtw review #<pr> lgtm|revise');
     repo = full[1]; num = parseInt(full[2]);
   }
   const newLabel = verdict === 'lgtm' ? LABELS.LGTM : verdict === 'revise' ? LABELS.REVISE : LABELS.REVISE;
@@ -320,7 +320,7 @@ async function cmdFix(args) {
   let workdir = args[0];
   const wip = getWip();
   if (!workdir && wip.workdir) workdir = wip.workdir;
-  else if (!workdir) throw new Error('Usage: /ghw fix <workdir>');
+  else if (!workdir) throw new Error('Usage: /gtw fix <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
@@ -341,7 +341,7 @@ async function cmdPr(args) {
   let workdir = args[0];
   const wip = getWip();
   if (!workdir && wip.workdir) workdir = wip.workdir;
-  else if (!workdir) throw new Error('Usage: /ghw pr <workdir>');
+  else if (!workdir) throw new Error('Usage: /gtw pr <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
@@ -382,7 +382,7 @@ async function cmdPush(args) {
   let workdir = args[0];
   const wip = getWip();
   if (!workdir && wip.workdir) workdir = wip.workdir;
-  else if (!workdir) throw new Error('Usage: /ghw push <workdir>');
+  else if (!workdir) throw new Error('Usage: /gtw push <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
@@ -397,7 +397,7 @@ async function cmdPush(args) {
 // confirm push: commit and push
 async function cmdNew(args) {
   const wip = getWip();
-  if (!wip.repo) throw new Error('No repo set. Run /ghw on <workdir> first');
+  if (!wip.repo) throw new Error('No repo set. Run /gtw on <workdir> first');
   const title = args[0] || '';
   const body = args.slice(1).join(' ') || '';
   const updated = Object.assign({}, wip, { issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() });
@@ -407,9 +407,9 @@ async function cmdNew(args) {
 
 async function cmdUpdate(args) {
   const id = parseInt(args[0], 10);
-  if (isNaN(id)) throw new Error('Usage: /ghw update #<id> [title]');
+  if (isNaN(id)) throw new Error('Usage: /gtw update #<id> [title]');
   const wip = getWip();
-  if (!wip.repo) throw new Error('No repo set. Run /ghw on <workdir> first');
+  if (!wip.repo) throw new Error('No repo set. Run /gtw on <workdir> first');
   const rest = args.slice(1).join(' ');
   const updated = Object.assign({}, wip, { issue: { action: 'update', id, title: rest, body: '' }, updatedAt: new Date().toISOString() });
   saveWip(updated);
@@ -420,7 +420,7 @@ async function cmdConfirm(args) {
   let workdir = args[0];
   const wip = getWip();
   if (!workdir && wip.workdir) workdir = wip.workdir;
-  else if (!workdir) throw new Error('Usage: /ghw confirm <workdir> [commit-msg]');
+  else if (!workdir) throw new Error('Usage: /gtw confirm <workdir> [commit-msg]');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
@@ -438,7 +438,7 @@ async function cmdConfirm(args) {
 async function cmdIssue(args) {
   const token = getToken();
   const repo = args[0];
-  if (!repo || !repo.includes('/')) throw new Error('Usage: /ghw issue owner/repo [--state=open|closed|all]');
+  if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw issue owner/repo [--state=open|closed|all]');
   const state = args.find(a => a?.startsWith('--state='))?.split('=')[1] || 'open';
   const params = new URLSearchParams({ state, per_page: '50', direction: 'desc' });
   const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
@@ -455,7 +455,7 @@ async function cmdShow(args) {
   if (full) { repo = full[1]; num = parseInt(full[2]); }
   else {
     const reposFile = getAutoRepos();
-    if (!reposFile.lastRepo) throw new Error('No repo context. Run /ghw review first to pick a repo');
+    if (!reposFile.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
     repo = reposFile.lastRepo;
     num = parseInt(String(prRef).replace('#', ''));
   }

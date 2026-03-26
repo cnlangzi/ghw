@@ -1,12 +1,12 @@
 # ghw
 
-> GitHub team workflow automation - auto-driven PR review with label-based state machine.
+> Git Team Workflow automation - auto-driven PR review with label-based state machine.
 
 `ghw` is a skill for [OpenClaw](https://github.com/openclaw/openclaw) that automates the PR review lifecycle using GitHub labels. No session state, no wip.json - just a repo pool and a label protocol.
 
 ## Features
 
-- **Auto-driven review** - `/ghw review` picks a repo and PR automatically, agent reviews the diff.
+- **Auto-driven review** - `/gtw review` picks a repo and PR automatically, agent reviews the diff.
 - **Label-based state machine** - PR state tracked via mutually exclusive `ghw/*` labels.
 - **Round-robin** - Reviews are distributed across repos evenly.
 - **Zero session state** - No wip.json, no workdir context. Just repos and labels.
@@ -43,19 +43,19 @@ All `ghw/*` labels are mutually exclusive - only one can exist on a PR at a time
 
 | Label | Meaning | Who sets it |
 |-------|---------|-------------|
-| `ghw/ready` | Waiting for review | Developer (`/ghw pr`) |
-| `ghw/wip` | Review in progress | Agent (`/ghw review`) |
-| `ghw/lgtm` | Approved | Agent (`/ghw review #<pr> lgtm`) |
-| `ghw/revise` | Changes requested | Agent (`/ghw review #<pr> revise`) |
+| `ghw/ready` | Waiting for review | Developer (`/gtw pr`) |
+| `ghw/wip` | Review in progress | Agent (`/gtw review`) |
+| `ghw/lgtm` | Approved | Agent (`/gtw review #<pr> lgtm`) |
+| `ghw/revise` | Changes requested | Agent (`/gtw review #<pr> revise`) |
 
 ## Quick Start
 
 ### 1. Add repos to automation pool
 
 ```bash
-/ghw auto add owner/repo1
-/ghw auto add owner/repo2
-/ghw auto list
+/gtw auto add owner/repo1
+/gtw auto add owner/repo2
+/gtw auto list
 ```
 
 ### 2. Create a PR
@@ -66,7 +66,7 @@ cd ~/code/myproject
 git checkout -b fix/123
 
 # After your changes
-/ghw pr ~/code/myproject
+/gtw pr ~/code/myproject
 # -> Pushes branch, creates PR with ghw/ready label
 ```
 
@@ -74,12 +74,12 @@ git checkout -b fix/123
 
 ```bash
 # Agent picks up the PR automatically
-/ghw review
+/gtw review
 # -> Claims ghw/ready PR, sets ghw/wip, returns diff
 
 # After reviewing the diff and linked issue:
-/ghw review #45 lgtm   # -> ghw/lgtm
-/ghw review #45 revise     # -> ghw/revise
+/gtw review #45 lgtm   # -> ghw/lgtm
+/gtw review #45 revise     # -> ghw/revise
 ```
 
 ## Command Reference
@@ -87,34 +87,34 @@ git checkout -b fix/123
 ### Automation Pool
 
 ```
-/ghw auto add owner/repo    Add repo to pool (creates ghw/* labels on first use)
-/ghw auto remove owner/repo Remove repo from pool
-/ghw auto list              List all repos in pool
+/gtw auto add owner/repo    Add repo to pool (creates ghw/* labels on first use)
+/gtw auto remove owner/repo Remove repo from pool
+/gtw auto list              List all repos in pool
 ```
 
 ### Review
 
 ```
-/ghw review                     Pick repo + PR, claim (ghw/wip), return diff
-/ghw review #<pr> lgtm     Approve: ghw/wip -> ghw/lgtm
-/ghw review #<pr> revise       Request changes: ghw/wip -> ghw/revise
+/gtw review                     Pick repo + PR, claim (ghw/wip), return diff
+/gtw review #<pr> lgtm     Approve: ghw/wip -> ghw/lgtm
+/gtw review #<pr> revise       Request changes: ghw/wip -> ghw/revise
 ```
 
 ### Git Operations
 
 ```
-/ghw fix <workdir> [name]      Fetch/rebase main, create branch
-/ghw pr <workdir> [title]     Push branch, create PR with ghw/ready
-/ghw push <workdir>            Stage changes (git add -A)
-/ghw confirm <workdir> [msg]   Commit and push
+/gtw fix <workdir> [name]      Fetch/rebase main, create branch
+/gtw pr <workdir> [title]     Push branch, create PR with ghw/ready
+/gtw push <workdir>            Stage changes (git add -A)
+/gtw confirm <workdir> [msg]   Commit and push
 ```
 
 ### Info
 
 ```
-/ghw issue owner/repo [--state=open]   List issues
-/ghw show #<pr>                        Show PR details
-/ghw config                             Show auto repos and token status
+/gtw issue owner/repo [--state=open]   List issues
+/gtw show #<pr>                        Show PR details
+/gtw config                             Show auto repos and token status
 ```
 
 ## Workflow Diagram
@@ -122,10 +122,10 @@ git checkout -b fix/123
 ```
 Developer                  Agent                    GitHub
    |                        |                        |
-   |-- /ghw pr ------------>|                        |
+   |-- /gtw pr ------------>|                        |
    |                        |-- push + PR + ghw/ready -->|
    |                        |                        |
-   |                        |-- /ghw review -------->|
+   |                        |-- /gtw review -------->|
    |                        |<--- PR diff + issue ----|
    |                        |                        |
    |<-- review result -----|                        |
@@ -133,7 +133,7 @@ Developer                  Agent                    GitHub
    |                        |                        |
    |  (code changes)        |                        |
    |                        |                        |
-   |                        |-- /ghw review #<pr> ->|
+   |                        |-- /gtw review #<pr> ->|
    |                        |   lgtm|revise     |
    |                        |-- ghw/lgtm/ghw/revise ->|
    |                        |                        |
@@ -164,7 +164,7 @@ openclaw cron add \
   --name "ghw-review" \
   --cron "*/15 * * * *" \
   --session main \
-  --system-event "/ghw review" \
+  --system-event "/gtw review" \
   --enabled
 ```
 

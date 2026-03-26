@@ -1,17 +1,17 @@
 ---
-name: ghw
-description: ghw - GitHub team workflow automation with auto-driven PR review. Label-based state machine.
+name: gtw
+description: gtw - Git Team Workflow automation with auto-driven PR review. Label-based state machine.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
 # ghw
 
-GitHub team workflow automation. Auto-driven PR review with label-based state machine.
+Git Team Workflow automation. Auto-driven PR review with label-based state machine.
 
 ## Usage
 
 ```
-/ghw <command> [args]
+/gtw <command> [args]
 ```
 
 ## Configuration
@@ -50,16 +50,16 @@ Only one `ghw/*` label can exist on a PR at a time.
 All git operations share the same workdir/repo context once set.
 
 ```
-/ghw on <workdir>
+/gtw on <workdir>
     Set workdir and repo in session context (wip.json).
 
-/ghw new [title] [body]
+/gtw new [title] [body]
     Create an issue draft in session context.
 
-/ghw update #<id> [title]
+/gtw update #<id> [title]
     Update an existing issue draft in session context.
 
-/ghw confirm
+/gtw confirm
     Execute all pending actions (create/update issue, create PR, etc.)
     stored in session context, then clear.
 ```
@@ -67,25 +67,25 @@ All git operations share the same workdir/repo context once set.
 ### Automation Pool
 
 ```
-/ghw auto add <owner/repo>
+/gtw auto add <owner/repo>
     Add repo to automation pool. Creates ghw/* labels on first use.
 
-/ghw auto remove <owner/repo>
+/gtw auto remove <owner/repo>
     Remove repo from automation pool.
 
-/ghw auto list
+/gtw auto list
     List all repos in the automation pool.
 ```
 
 ### Review
 
 ```
-/ghw review
+/gtw review
     Pick a repo from the automation pool (round-robin), find the oldest
     ghw/ready PR, claim it (replace ghw/ready -> ghw/wip), return PR
     details and diff for agent review.
 
-/ghw review #<pr> lgtm|revise
+/gtw review #<pr> lgtm|revise
     Submit review verdict on the PR:
     - lgtm   -> ghw/wip -> ghw/lgtm
     - revise -> ghw/wip -> ghw/revise
@@ -93,38 +93,38 @@ All git operations share the same workdir/repo context once set.
 
 Review flow:
 1. ghw/ready PR created by developer
-2. /ghw review -> agent picks it up, sets ghw/wip
+2. /gtw review -> agent picks it up, sets ghw/wip
 3. Agent reviews diff + linked issue
-4. /ghw review #<pr> lgtm|revise -> updates label only
+4. /gtw review #<pr> lgtm|revise -> updates label only
 5. Developer fixes -> re-adds ghw/ready -> loop
 
 ### Git Operations
 
 ```
-/ghw fix [branch-name]
-    Fetch/rebase main, create new branch. Uses session workdir from /ghw on.
+/gtw fix [branch-name]
+    Fetch/rebase main, create new branch. Uses session workdir from /gtw on.
 
-/ghw pr [title]
+/gtw pr [title]
     Push branch, create PR with ghw/ready label, link to issue if branch
     name contains issue number (e.g. fix/123).
 
-/ghw push
-    git add -A, show diff summary. Uses session workdir from /ghw on.
+/gtw push
+    git add -A, show diff summary. Uses session workdir from /gtw on.
 
-/ghw confirm [commit-msg]
+/gtw confirm [commit-msg]
     Commit staged changes and push.
 ```
 
 ### Info
 
 ```
-/ghw issue <owner/repo> [--state=open|closed|all]
+/gtw issue <owner/repo> [--state=open|closed|all]
     List open issues in a repo.
 
-/ghw show #<pr>
+/gtw show #<pr>
     Show PR/issue details and labels. Uses last-reviewed repo context.
 
-/ghw config
+/gtw config
     Show automation pool repos and token status.
 ```
 
