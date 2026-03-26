@@ -10,7 +10,7 @@
 - **LLM-assisted issue creation** - `/ghw new` reads the conversation and generates a properly structured issue. No copy-paste.
 - **Git operations** - `fix`, `push`, and `pr` commands wrap standard git workflows with semantic commit log generation.
 - **Emoji review protocol** - eyes claim -> checklist -> approved/changes verdict. No concurrent reviews, no confusion.
-- **Multi-repo support** - Configure once, work across all your repos.
+- **Multi-repo ready** - Start with any repo by pointing to its local working copy. Switch repos mid-session with `/ghw start`.
 - **Zero external dependencies** - Plain Node.js, no npm packages needed.
 
 ## Installation
@@ -72,14 +72,6 @@ Add to `~/.openclaw/openclaw.json`:
 2. Grant the `repo` scope
 3. Copy the token and paste into `GITHUB_ACCESS_TOKEN`
 
-#### Configuring repos
-
-Comma-separated list or JSON array:
-
-```bash
-# or
-```
-
 ### 4. Authenticate (optional, for OAuth Device Flow)
 
 If you prefer OAuth instead of PAT:
@@ -104,7 +96,7 @@ Resolves the git remote from a local directory and writes it to `wip.json`. All 
 
 ```bash
 # Examples
-/ghw start ~/code/myproject
+/ghw start /Users/name/code/myproject
 /ghw start /absolute/path/to/repo
 ```
 
@@ -221,7 +213,7 @@ Completes the review:
 ```bash
 /ghw poll
 ```
-Scans all configured repos for:
+Scans `wip.json`'s repo for:
 - New issues (last 24h)
 - Unclaimed PRs (not reviewed yet)
 - Merge-ready PRs (approved, waiting for merge)
@@ -236,7 +228,7 @@ Shows current configuration, token status, and `wip.json` contents.
 ## Workflow Example
 
 ```
-You: /ghw start ~/code/myproject
+You: /ghw start /Users/name/code/myproject
 Agent: workdir set, repo: cnlangzi/myproject
 
 You: /ghw new
