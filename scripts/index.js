@@ -1,29 +1,25 @@
 #!/usr/bin/env node
 /**
  * github-work skill - GitHub Team Workflow
- * Commands: start, new, update, confirm, fix, pr, push, review, issue, show, poll, config, pending
+ * Commands: start, new, update, confirm, fix, pr, push, review, issue, show, poll, config
  */
 
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { execSync, exec } = require('child_process');
+const { execSync } = require('child_process');
 const os = require('os');
 
 const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'github-work');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
 const wip_FILE = path.join(CONFIG_DIR, 'wip.json');
-const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 
-// Ensure config dir
 [CONFIG_DIR].forEach(d => { if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); fs.chmodSync(d, '0700'); } });
 
-// --- Env ---
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const ACCESS_TOKEN = process.env.GITHUB_ACCESS_TOKEN || '';
 
-// --- GitHub API ---
 function apiRequest(method, endpoint, token, body = null) {
   return new Promise((resolve, reject) => {
     const url = `https://api.github.com${endpoint}`;
@@ -52,11 +48,9 @@ function apiRequest(method, endpoint, token, body = null) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// --- File helpers ---
 function readJSON(file) { try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null; } catch (e) { return null; } }
 function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); fs.chmodSync(file, '0600'); }
 
-// --- Token ---
 function getToken() {
   if (ACCESS_TOKEN) return ACCESS_TOKEN;
   const t = readJSON(TOKEN_FILE);
@@ -65,17 +59,16 @@ function getToken() {
 }
 function saveToken(t) { writeJSON(TOKEN_FILE, t); }
 
-// --- OAuth ---
 async function deviceFlow() {
   if (!CLIENT_ID) throw new Error('GITHUB_CLIENT_ID not configured');
   const codeResp = await postForm('https://github.com/login/device/code', { client_id: CLIENT_ID, scope: 'repo workflow' });
   if (!codeResp.device_code) throw new Error(`Device flow failed: ${JSON.stringify(codeResp)}`);
-  console.log(`\n🔗 Open: https://github.com/login/device\n   Enter code: ${codeResp.user_code}\nWaiting...`);
+  console.log(`\nOpen: https://github.com/login/device\n   Enter code: ${codeResp.user_code}\nWaiting...`);
   let attempts = (codeResp.expires_in || 300) / (codeResp.interval || 5);
   while (attempts-- > 0) {
     await sleep((codeResp.interval || 5) * 1000);
     const r = await postForm('https://github.com/login/oauth/access_token', { client_id: CLIENT_ID, device_code: codeResp.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' });
-    if (r.access_token) { saveToken({ access_token: r.access_token }); console.log('✅ Auth successful!'); return readJSON(TOKEN_FILE); }
+    if (r.access_token) { saveToken({ access_token: r.access_token }); console.log('Auth successful!'); return readJSON(TOKEN_FILE); }
     if (r.error === 'authorization_pending') { process.stdout.write('.'); continue; }
     if (r.error === 'slow_down') { await sleep((codeResp.interval || 5) * 1000); continue; }
     throw new Error(`OAuth error: ${r.error}`);
@@ -93,35 +86,28 @@ function postForm(urlStr, data) {
   });
 }
 
-// --- Pending state ---
-function getWip() { const p = readJSON(wip_FILE); return p || {}; }
+function getWip() { return readJSON(wip_FILE) || {}; }
 function saveWip(p) { writeJSON(wip_FILE, p); }
 function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
 
-// --- Git helpers ---
 function git(cmd, cwd) {
-  try { return execSync(cmd, { cwd: cwd || process.cwd(), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
+  try { return execSync(cmd, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
   catch (e) { throw new Error(`Git error: ${e.message}`); }
 }
 
 function getRemoteRepo(workdir) {
   const remotes = git('git remote -v', workdir).split('\n');
-  const match = remotes.find(l => l.includes('origin') && (l.includes('github.com') || l.includes('git@')));
-  if (!match) throw new Error('No origin remote found in ' + workdir);
-  // git@github.com:owner/repo.git or https://github.com/owner/repo.git
+  const match = remotes.find(l => l.includes('origin'));
+  if (!match) throw new Error('No origin remote found');
   const m = match.match(/git@github\.com:([^/]+\/[^.]+)\.git/) || match.match(/https:\/\/github\.com\/([^/]+\/[^/]+)/);
-  if (!m) throw new Error(`Cannot parse remote URL: ${match}`);
+  if (!m) throw new Error(`Cannot parse remote: ${match}`);
   return m[1];
 }
 
-function getCurrentBranch(cwd) {
-  return git('git branch --show-current', cwd);
-}
+function getCurrentBranch(cwd) { return git('git branch --show-current', cwd); }
 
 function getDefaultBranch(cwd) {
-  const remote = git('git remote get-url origin', cwd);
-  // Try git symbolic-ref first
-  try { return execSync('git symbolic-ref refs/remotes/origin/HEAD', { encoding: 'utf8' }).trim().split('/').pop(); } catch(e) {}
+  try { return execSync('git symbolic-ref refs/remotes/origin/HEAD', { encoding: 'utf8' }).trim().split('/').pop(); } catch (e) {}
   return 'main';
 }
 
@@ -132,28 +118,11 @@ const REVIEW_ITEMS = [
   'Are there any missing pieces?',
 ];
 
-function buildChecklist() {
-  return '## Review Checklist\n\nCheck each item. Mark [x] when verified:\n\n' + REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n') + '\n\n---\n_💡 Run /ghw review d after all items are [x]_';
-}
-
-function parseChecklist(comments, login) {
-  const mine = comments.filter(c => c.user?.login === login);
-  const items = [];
-  for (const c of mine) {
-    for (const line of c.body.split('\n')) {
-      const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
-      if (m) items.push({ checked: m[1] === 'x', text: m[2].trim() });
-    }
-  }
-  return items;
-}
-
 // --- Commands ---
 
 async function cmdStart(args) {
   const workdir = args[0];
   if (!workdir) throw new Error('Usage: /ghw start <workdir>');
-  // Expand ~ to home directory
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!path.isAbsolute(absWorkdir)) throw new Error('Please use an absolute path, e.g. /Users/name/code/myproject or ~/code/myproject');
@@ -161,11 +130,10 @@ async function cmdStart(args) {
   const repo = getRemoteRepo(absWorkdir);
   const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
   saveWip(wip);
-  return { ok: true, workdir: absWorkdir, repo, message: `Workdir set to ${absWorkdir}, repo: ${repo}` };
+  return { ok: true, workdir: absWorkdir, repo, message: `workdir set to ${absWorkdir}, repo: ${repo}` };
 }
 
 async function cmdNew(args) {
-  // args: [title, body] or empty (agent will fill)
   const wip = getWip();
   if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
   const title = args[0] || '';
@@ -176,14 +144,13 @@ async function cmdNew(args) {
 }
 
 async function cmdUpdate(args) {
-  // args: [#id, title, body]
   const id = parseInt(args[0], 10);
   if (isNaN(id)) throw new Error('Usage: /ghw update #<id> [title] [body...]');
   const wip = getWip();
   if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
-  const title = args.slice(1).filter((_,i) => i % 2 === 0).join(' ') || '';
-  const body = args.slice(2).filter((_,i) => i % 2 === 1).join(' ') || '';
-  const updated = { ...wip, issue: { action: 'update', id, title, body }, updatedAt: new Date().toISOString() };
+  // Parse remaining args as title body pairs
+  const rest = args.slice(1).join(' ');
+  const updated = { ...wip, issue: { action: 'update', id, title: rest, body: '' }, updatedAt: new Date().toISOString() };
   saveWip(updated);
   return { ok: true, wip: updated, message: `Issue #${id} update draft saved` };
 }
@@ -191,14 +158,13 @@ async function cmdUpdate(args) {
 async function cmdConfirm(args) {
   const token = getToken();
   const wip = getWip();
-  if (!wip.repo) throw new Error('No wip action. Run /ghw start + /ghw new first');
+  if (!wip.repo) throw new Error('No pending action. Run /ghw start + /ghw new first');
   const results = [];
 
-  // Issue
   if (wip.issue?.title) {
     const { action, id, title, body } = wip.issue;
     if (action === 'create') {
-      const data = await apiRequest('POST', `/repos/${wip.repo}/issues`, token, { title, body: body || `Created via github-work skill` });
+      const data = await apiRequest('POST', `/repos/${wip.repo}/issues`, token, { title, body: body || 'Created via github-work skill' });
       results.push({ type: 'issue', action: 'created', id: data.number, url: data.html_url });
     } else if (action === 'update' && id) {
       const data = await apiRequest('PATCH', `/repos/${wip.repo}/issues/${id}`, token, { title, body });
@@ -206,23 +172,17 @@ async function cmdConfirm(args) {
     }
   }
 
-  // Branch
   if (wip.branch?.name && wip.issue?.id) {
-    const issueNum = wip.issue.id;
-    const branchName = wip.branch.name;
-    const workdir = wip.workdir;
+    const shaResp = await apiRequest('GET', `/repos/${wip.repo}/git/ref/heads/${getDefaultBranch(wip.workdir)}`, token);
+    await apiRequest('POST', `/repos/${wip.repo}/git/refs`, token, { ref: `refs/heads/${wip.branch.name}`, sha: shaResp.object.sha });
     const [owner, repoName] = wip.repo.split('/');
-    const shaResp = await apiRequest('GET', `/repos/${wip.repo}/git/ref/heads/${getDefaultBranch(workdir)}`, token);
-    await apiRequest('POST', `/repos/${wip.repo}/git/refs`, token, { ref: `refs/heads/${branchName}`, sha: shaResp.object.sha });
-    try { await apiRequest('POST', `/repos/${owner}/${repoName}/issues/${issueNum}/labels`, token, { labels: [`branch:${branchName}`] }); } catch(e) {}
-    results.push({ type: 'branch', action: 'created', name: branchName });
+    try { await apiRequest('POST', `/repos/${owner}/${repoName}/issues/${wip.issue.id}/labels`, token, { labels: [`branch:${wip.branch.name}`] }); } catch(e) {}
+    results.push({ type: 'branch', action: 'created', name: wip.branch.name });
   }
 
-  // PR
   if (wip.pr?.title) {
-    const workdir = wip.workdir;
-    const baseBranch = getDefaultBranch(workdir);
-    const headBranch = wip.branch?.name || getCurrentBranch(workdir);
+    const baseBranch = getDefaultBranch(wip.workdir);
+    const headBranch = wip.branch?.name || getCurrentBranch(wip.workdir);
     const body = wip.pr.body || `Closes #${wip.issue?.id || '?'}`;
     const data = await apiRequest('POST', `/repos/${wip.repo}/pulls`, token, { title: wip.pr.title, body, head: headBranch, base: baseBranch });
     results.push({ type: 'pr', action: 'created', id: data.number, url: data.html_url });
@@ -238,14 +198,10 @@ async function cmdFix(args) {
   const workdir = wip.workdir;
   const branchName = args[0] || `fix/${Date.now()}`;
   const defaultBranch = getDefaultBranch(workdir);
-
-  // Fetch and rebase
   git('git fetch origin', workdir);
   git(`git checkout ${defaultBranch}`, workdir);
   git(`git pull --rebase origin ${defaultBranch}`, workdir);
-  // Create new branch
   git(`git checkout -b ${branchName}`, workdir);
-
   const updated = { ...wip, branch: { name: branchName }, updatedAt: new Date().toISOString() };
   saveWip(updated);
   return { ok: true, branch: branchName, base: defaultBranch, workdir, message: `Switched to new branch '${branchName}' (rebased on ${defaultBranch})` };
@@ -255,24 +211,17 @@ async function cmdPr(args) {
   const wip = getWip();
   if (!wip.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
   if (!wip.branch?.name) throw new Error('No branch. Run /ghw fix [name] first');
-
   const workdir = wip.workdir;
   const branchName = wip.branch.name;
-  const defaultBranch = getDefaultBranch(workdir);
-
-  // Push branch
   git(`git push -u origin ${branchName}`, workdir);
-
-  // Get issue body for PR
   let prBody = '';
   if (wip.issue?.id) {
     try {
       const token = getToken();
       const issue = await apiRequest('GET', `/repos/${wip.repo}/issues/${wip.issue.id}`, token);
-      prBody = `## 关联 Issue\nCloses #${wip.issue.id}\n\n${issue.body || ''}\n\n---\n_Generated by github-work skill_`;
+      prBody = `## Linked Issue\\nCloses #${wip.issue.id}\\n\\n${issue.body || ''}\\n\\n---\\n_Generated by github-work skill_`;
     } catch(e) {}
   }
-
   const updated = { ...wip, pr: { title: wip.pr?.title || `Fix #${wip.issue?.id || ''}: ${branchName}`, body: prBody }, updatedAt: new Date().toISOString() };
   saveWip(updated);
   return { ok: true, branch: branchName, message: `Branch pushed. Run /ghw confirm to create PR` };
@@ -283,115 +232,114 @@ async function cmdPush(args) {
   if (!wip.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
   const workdir = wip.workdir;
   const branch = getCurrentBranch(workdir);
-
-  // Get diff for commit message generation
   const diff = git('git diff --cached', workdir) || git('git diff', workdir) || '';
   const stats = git('git diff --stat --cached', workdir) || git('git diff --stat', workdir) || '';
-
   const updated = { ...wip, push: { branch, diff, stats, staged: !!git('git diff --cached', workdir) }, updatedAt: new Date().toISOString() };
   saveWip(updated);
   return { ok: true, branch, stats, message: `Changes staged. Commit message needed. Use /ghw confirm push` };
 }
 
+// review: fully automatic - claim -> agent reviews -> verdict -> release claim
 async function cmdReview(args) {
   const token = getToken();
   const wip = getWip();
-  // args: [repo], or verdict (approved/changes) comes from the LLM agent after it reviews the PR
-  const verdict = args.find(a => a === 'approved' || a === 'changes') || 'approved';
-  const repo = wip.repo || (args.find(a => a?.includes('/')) || '');
+  const verdictArg = args.find(a => a === 'approved' || a === 'changes') || null;
+  const repo = wip.repo || (args.find(a => String(a).includes('/')) || '');
 
   if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first');
 
   const myLogin = (await apiRequest('GET', '/user', token)).login;
 
-  // Find earliest unclaimed PR
-  const params = new URLSearchParams({ state: 'open', per_page: '50', sort: 'created', direction: 'asc' });
-  const prs = await apiRequest('GET', `/repos/${repo}/pulls?${params}`, token);
+  // Parse PR number from args
+  let targetPrNum = null;
+  for (const a of args) {
+    const m = String(a).match(/^#?(\d+)$/);
+    if (m) { targetPrNum = parseInt(m[1]); break; }
+  }
 
   let targetPr = null;
-  for (const pr of prs) {
-    if (pr.user?.login === myLogin) continue;
-    const comments = await apiRequest('GET', `/repos/${repo}/issues/${pr.number}/comments`, token);
-    const hasClaim = comments.some(c => c.body?.includes('👀'));
-    if (!hasClaim) { targetPr = pr; break; }
+  if (targetPrNum) {
+    try {
+      targetPr = await apiRequest('GET', `/repos/${repo}/pulls/${targetPrNum}`, token);
+      if (verdictArg === null) {
+        const comments = await apiRequest('GET', `/repos/${repo}/issues/${targetPrNum}/comments`, token);
+        const hasClaim = comments.some(c => c.body?.includes('eyes'));
+        if (hasClaim) return { ok: true, claimed: false, message: `PR #${targetPrNum} already claimed. Call /ghw review #${targetPrNum} approved|changes after reviewing` };
+      }
+    } catch (e) { throw new Error(`PR #${targetPrNum} not found`); }
+  } else {
+    const params = new URLSearchParams({ state: 'open', per_page: '50', sort: 'created', direction: 'asc' });
+    const prs = await apiRequest('GET', `/repos/${repo}/pulls?${params}`, token);
+    for (const pr of prs) {
+      if (pr.user?.login === myLogin) continue;
+      const comments = await apiRequest('GET', `/repos/${repo}/issues/${pr.number}/comments`, token);
+      if (!comments.some(c => c.body?.includes('eyes'))) { targetPr = pr; break; }
+    }
   }
 
   if (!targetPr) return { ok: true, message: 'No unclaimed PRs found', repo };
 
-  // Get PR diff for agent review
-  const prDiff = await apiRequest('GET', `/repos/${repo}/pulls/${targetPr.number}`, token);
-  const files = await apiRequest('GET', `/repos/${repo}/pulls/${targetPr.number}/files?per_page=100`, token);
-  const filesSummary = files.map(f => `  - ${f.filename}: +${f.additions} -${f.deletions}`).join('\n');
-  const changesSummary = `Files changed (${files.length}):\n${filesSummary}`;
+  const prNum = targetPr.number;
 
-  // Post claim comment
-  const checklist = REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n');
-  const claimComment = await apiRequest('POST', `/repos/${repo}/issues/${targetPr.number}/comments`, token, {
-    body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n## Review Checklist\n\n${checklist}\n\n---\n_Run /ghw review d #${targetPr.number} approved|changes after review_`,
+  // Get linked issue
+  let linkedIssue = { title: '', body: '' };
+  const match = targetPr.body?.match(/(?:closes|fixes|cloze)s?\s+#(\d+)/i);
+  if (match) {
+    try {
+      const li = await apiRequest('GET', `/repos/${repo}/issues/${match[1]}`, token);
+      linkedIssue = { title: li.title || '', body: li.body || '' };
+    } catch (e) {}
+  }
+
+  const allComments = await apiRequest('GET', `/repos/${repo}/issues/${prNum}/comments`, token);
+  const myPrevComments = allComments.filter(c => c.user?.login === myLogin);
+
+  // Second call with verdict
+  if (verdictArg) {
+    const emoji = verdictArg;
+    const reviewState = verdictArg === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
+    for (const c of myPrevComments) { await apiRequest('DELETE', `/repos/${repo}/issues/comments/${c.id}`, token).catch(() => {}); }
+    await apiRequest('POST', `/repos/${repo}/issues/${prNum}/comments`, token, { body: `${emoji} **Review complete** by @${myLogin} — ${verdictArg === 'approved' ? 'approves' : 'requests changes'}` });
+    await apiRequest('POST', `/repos/${repo}/pulls/${prNum}/reviews`, token, { body: emoji, event: reviewState });
+    return { ok: true, verdict: verdictArg, pr: { number: prNum, title: targetPr.title, url: targetPr.html_url }, repo, message: `${emoji} Review complete for PR #${prNum} — claim released` };
+  }
+
+  // First call - claim
+  const prevChecked = {};
+  for (const c of myPrevComments) {
+    for (const line of c.body.split('\n')) {
+      const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
+      if (m) prevChecked[m[2].trim()] = m[1] === 'x';
+    }
+  }
+
+  const checklistItems = REVIEW_ITEMS.map(item => ({ text: item, checked: !!prevChecked[item] }));
+  const checklistLines = checklistItems.map(i => `  - [${i.checked ? 'x' : ' '}] ${i.text}`).join('\n');
+
+  await apiRequest('POST', `/repos/${repo}/issues/${prNum}/comments`, token, {
+    body: `eyes **Review claimed** by @${myLogin}\n\n_Emoji: eyes = in progress, approved = done, changes = needs changes_\n\n## Review Checklist\n\n${checklistLines}\n\n---\n_Agent: review the diff and linked issue, then call:\n  /ghw review #${prNum} approved   # or changes_`,
   });
+
+  const files = await apiRequest('GET', `/repos/${repo}/pulls/${prNum}/files?per_page=100`, token);
+  const filesSummary = files.map(f => `  - ${f.filename}: +${f.additions} -${f.deletions}`).join('\n');
 
   return {
     ok: true, claimed: true,
-    pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url, user: targetPr.user?.login, state: targetPr.state },
+    pr: { number: prNum, title: targetPr.title, url: targetPr.html_url, user: targetPr.user?.login },
+    linkedIssue,
+    files: files.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, patch: f.patch })),
+    checklist: checklistItems,
+    hasPrevReview: myPrevComments.length > 0,
     repo,
-    changes: changesSummary,
-    checklist: REVIEW_ITEMS,
-    comment: claimComment.html_url,
-    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nAgent should review the PR and its diff, then call:\n/ghw review d #${targetPr.number} approved   # or changes\n\nChecklist:\n${checklist}`,
+    verdictNeeded: `/ghw review #${prNum} approved   # or changes`,
+    message: `eyes Claimed PR #${prNum}: ${targetPr.title}\n\nLinked Issue: ${linkedIssue.title || 'none'}\n\nFiles changed (${files.length}):\n${filesSummary}\n\nReview the diff against the issue requirements, then call:\n/ghw review #${prNum} approved   # or changes`,
   };
-}
-
-async function cmdReviewDone(args) {
-  const token = getToken();
-  const wip = getWip();
-  const prRef = args[0];
-  const verdict = args[1] || 'approved';
-
-  // Parse PR ref: could be just number, or owner/repo#number
-  let owner, repo, num;
-  if (prRef?.includes('/')) {
-    const m = prRef.match(/([^/]+)\/([^#]+)#?(\d+)/);
-    if (!m) throw new Error(`Invalid PR ref: ${prRef}`);
-    owner = m[1]; repo = m[2]; num = parseInt(m[3]);
-  } else {
-    if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
-    num = parseInt(prRef);
-    [owner, repo] = wip.repo.split('/');
-  }
-
-  const myLogin = (await apiRequest('GET', '/user', token)).login;
-
-  // Claim if not already claimed
-  const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-  let claimComment;
-  const existingClaim = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
-  if (!existingClaim) {
-    const checklist = REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n');
-    claimComment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
-      body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n## Review Checklist\n\n${checklist}\n\n---\n_Run /ghw review d #${num} approved|changes after review_`,
-    });
-  }
-
-  // Post verdict
-  const emoji = verdict === 'approved' ? '✅' : '❌';
-  const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
-  const verdictComment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
-    body: `${emoji} **Review complete** by @${myLogin} — ${verdict === 'approved' ? 'approves' : 'requests changes'}`,
-  });
-  await apiRequest('POST', `/repos/${owner}/${repo}/pulls/${num}/reviews`, token, { body: `${emoji} ${verdict}`, event: reviewState });
-
-  // Delete claim comment if we created one
-  if (existingClaim) {
-    await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${existingClaim.id}`, token).catch(() => {});
-  }
-
-  return { ok: true, verdict, pr: num, comment: verdictComment.html_url, message: `${emoji} Review complete for PR #${num}` };
 }
 
 async function cmdIssue(args) {
   const token = getToken();
   const wip = getWip();
-  const repo = args[0] && args[0].includes('/') ? args[0] : wip.repo;
+  const repo = args[0] && String(args[0]).includes('/') ? args[0] : wip.repo;
   if (!repo) throw new Error('No repo. Run /ghw start <workdir> first, or pass owner/repo');
   const params = new URLSearchParams({ state: 'open', per_page: '50' });
   const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
@@ -405,7 +353,7 @@ async function cmdShow(args) {
   const wip = getWip();
   const id = parseInt(args[0], 10);
   if (isNaN(id)) throw new Error('Usage: /ghw show #<id>');
-  const repo = args[1] && args[1].includes('/') ? args[1] : wip.repo;
+  const repo = args[1] && String(args[1]).includes('/') ? args[1] : wip.repo;
   if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first');
   const data = await apiRequest('GET', `/repos/${repo}/issues/${id}`, token);
   return { ok: true, issue: { number: data.number, title: data.title, body: data.body, state: data.state, url: data.html_url, assignee: data.assignee?.login }, display: `[#${data.number}] ${data.title}\n\n${data.body || ''}\n\nState: ${data.state}\nURL: ${data.html_url}` };
@@ -414,74 +362,54 @@ async function cmdShow(args) {
 async function cmdPoll(args) {
   const token = getToken();
   const wip = getWip();
-  const myLogin = (await apiRequest('GET', '/user', token)).login;
-  const repos = wip.repo ? [wip.repo] : [];
-  if (!repos.length) return { ok: true, results: [], message: 'No repos configured' };
+  const repo = wip.repo;
+  if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first');
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const results = { newIssues: [], claimedPRs: [], mergeReady: [] };
+  const sub = args[0];
 
-  for (const repo of repos) {
-    const issues = await apiRequest('GET', `/repos/${repo}/issues?since=${since}&state=open&per_page=20`, token);
-    issues.filter(i => !i.pull_request).forEach(i => results.newIssues.push({ ...i, repo }));
-    const prs = await apiRequest('GET', `/repos/${repo}/pulls?state=open&per_page=30`, token);
-    for (const pr of prs) {
-      if (pr.user?.login === myLogin) continue;
-      const reviews = await apiRequest('GET', `/repos/${repo}/pulls/${pr.number}/reviews`, token);
-      const comments = await apiRequest('GET', `/repos/${repo}/issues/${pr.number}/comments`, token);
-      const approvals = reviews.filter(r => r.state === 'APPROVED').length;
-      const hasClaim = comments.some(c => c.body?.includes('👀') && c.user?.login !== myLogin);
-      if (!hasClaim) results.claimedPRs.push({ number: pr.number, title: pr.title, url: pr.html_url, by: pr.user?.login, repo });
-    }
+  if (sub === 'issue') {
+    const params = new URLSearchParams({ state: 'open', per_page: '10', sort: 'created', direction: 'asc' });
+    const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
+    const issues = data.filter(i => !i.pull_request);
+    return {
+      ok: true, type: 'issue', repo,
+      issues: issues.map(i => ({ number: i.number, title: i.title, state: i.state, url: i.html_url, created_at: i.created_at, assignee: i.assignee?.login })),
+      display: issues.length ? issues.map(i => `[#${i.number}] ${i.title} (${(i.created_at || '').split('T')[0]})`).join('\n') : 'No open issues',
+    };
   }
 
-  let display = '';
-  if (results.newIssues.length) { display += '\n🆕 New Issues:\n'; results.newIssues.forEach(i => { display += `  [#${i.number}] ${i.title} [${i.repo}]\n`; }); }
-  if (results.claimedPRs.length) { display += '\n👀 Unclaimed PRs:\n'; results.claimedPRs.forEach(pr => { display += `  [#${pr.number}] ${pr.title} by @${pr.by} [${pr.repo}]\n`; }); }
-  if (results.mergeReady.length) { display += '\n✅ Merge Ready:\n'; results.mergeReady.forEach(pr => { display += `  [#${pr.number}] ${pr.title} [${pr.repo}]\n`; }); }
-  if (!results.newIssues.length && !results.claimedPRs.length && !results.mergeReady.length) display += '\nNothing new.\n';
-  return { ok: true, ...results, display };
+  if (sub === 'pr') {
+    const params = new URLSearchParams({ state: 'open', per_page: '10', sort: 'created', direction: 'asc' });
+    const data = await apiRequest('GET', `/repos/${repo}/pulls?${params}`, token);
+    const prData = data.map(pr => ({ number: pr.number, title: pr.title, state: pr.state, url: pr.html_url, created_at: pr.created_at, user: pr.user?.login }));
+    return {
+      ok: true, type: 'pr', repo,
+      prs: prData,
+      display: prData.length ? prData.map(pr => `[#${pr.number}] ${pr.title} by @${pr.user} (${(pr.created_at || '').split('T')[0]})`).join('\n') : 'No open PRs',
+    };
+  }
+
+  // Default: both
+  const issueParams = new URLSearchParams({ state: 'open', per_page: '10', sort: 'created', direction: 'asc' });
+  const prParams = new URLSearchParams({ state: 'open', per_page: '10', sort: 'created', direction: 'asc' });
+  const [issuesData, prsData] = await Promise.all([
+    apiRequest('GET', `/repos/${repo}/issues?${issueParams}`, token),
+    apiRequest('GET', `/repos/${repo}/pulls?${prParams}`, token),
+  ]);
+  const issues = issuesData.filter(i => !i.pull_request);
+  let display = issues.length ? '\nOpen Issues (oldest first):\n' + issues.map(i => `  [#${i.number}] ${i.title} (${(i.created_at || '').split('T')[0]})`).join('\n') : '\nOpen Issues: none';
+  display += prsData.length ? '\n\nOpen PRs (oldest first):\n' + prsData.map(pr => `  [#${pr.number}] ${pr.title} by @${pr.user?.login} (${(pr.created_at || '').split('T')[0]})`).join('\n') : '\nOpen PRs: none';
+  if (!issues.length && !prsData.length) display = 'Nothing open.';
+  return { ok: true, repo, issues, prs: prsData, display };
 }
 
 async function cmdConfig(args) {
   return {
     ok: true,
-    repos: REPOS,
     workDir: process.cwd(),
     hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
     wip: readJSON(wip_FILE) || null,
   };
-}
-
-async function cmdPending(args) {
-  const sub = args[0];
-  if (sub === 'get') return { ok: true, wip: getWip() };
-  if (sub === 'clear') { clearWip(); return { ok: true, message: 'Pending cleared' }; }
-  // /ghw wip set --issue-title=X --issue-body=Y ...
-  const opts = parseArgs(args.slice(1));
-  const p = { ...getWip() };
-  if (opts['issue-title']) {
-    p.issue = { action: 'update', id: opts['issue-id'] ? parseInt(opts['issue-id']) : null, title: opts['issue-title'], body: opts['issue-body'] || '' };
-  }
-  if (opts['branch-name']) p.branch = { name: opts['branch-name'] };
-  if (opts['pr-title']) p.pr = { title: opts['pr-title'], body: opts['pr-body'] || '' };
-  if (opts['repo']) p.repo = opts['repo'];
-  if (opts['workdir']) p.workdir = opts['workdir'];
-  p.updatedAt = new Date().toISOString();
-  saveWip(p);
-  return { ok: true, wip: p };
-}
-
-
-// --- Utils ---
-function parseArgs(args) {
-  const opts = {};
-  for (const arg of args) {
-    const m = arg.match(/^--([a-zA-Z0-9-]+)(?:=(.+))?$/);
-    if (m) { opts[m[1]] = m[2] !== undefined ? m[2] : true; }
-    else { if (!opts._) opts._ = []; opts._.push(arg); }
-  }
-  return opts;
 }
 
 // --- Dispatch ---
@@ -493,7 +421,7 @@ async function main() {
   let result;
   try {
     switch (cmd) {
-      case 'auth': result = await cmdAuth(); break;
+      case 'auth': result = await deviceFlow(); break;
       case 'start': result = await cmdStart(args); break;
       case 'new': result = await cmdNew(args); break;
       case 'update': result = await cmdUpdate(args); break;
@@ -501,15 +429,11 @@ async function main() {
       case 'fix': result = await cmdFix(args); break;
       case 'pr': result = await cmdPr(args); break;
       case 'push': result = await cmdPush(args); break;
-      case 'review':
-        if (args[0] === 'd' || args[0] === 'done') result = await cmdReviewDone(args.slice(1));
-        else result = await cmdReview(args);
-        break;
+      case 'review': result = await cmdReview(args); break;
       case 'issue': result = await cmdIssue(args); break;
       case 'show': result = await cmdShow(args); break;
       case 'poll': result = await cmdPoll(args); break;
       case 'config': result = await cmdConfig(args); break;
-      case 'pending': result = await cmdPending(args); break;
       default:
         throw new Error(`Unknown: ${cmd}. Use: start, new, update, confirm, fix, pr, push, review, issue, show, poll, config`);
     }

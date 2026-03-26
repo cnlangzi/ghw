@@ -166,28 +166,28 @@ Result is written to `wip.json` as the pending branch.
 4. `git commit && git push`
 
 ---
-
 ### Code Review
 
 ```bash
 /ghw review
 ```
-From `wip.json`'s repo, finds the earliest unclaimed open PR and:
-1. Claims it with eyes (prevents other reviewers from picking it up)
+From wip.json's repo, finds the earliest unclaimed open PR and:
+1. Claims it with eyes (prevents other reviewers)
 2. Posts a review checklist to the PR
-3. Returns PR title, URL, files changed summary, and checklist items
+3. Returns PR title, linked issue, files changed summary, and checklist
 
-Agent then reviews the PR diff against the checklist, then calls:
+Agent then reviews the PR diff against the linked issue and checklist, then calls:
 
 ```bash
-/ghw review d #<pr> [approved|changes]
+/ghw review #<pr> approved    # Approves PR
+/ghw review #<pr> changes     # Requests changes
 ```
-Posts the verdict (eyes/approved/changes), deletes the claim comment, and submits the GitHub Official Review.
 
 ```bash
 # Examples
-/ghw review d #45 approved       # Approves PR #45
-/ghw review d #78 changes        # Requests changes on PR #78
+/ghw review                     # Auto-find and claim earliest unclaimed PR
+/ghw review #45 approved    # Approve PR #45
+/ghw review #78 changes     # Request changes on PR #78
 ```
 
 ---
@@ -195,12 +195,19 @@ Posts the verdict (eyes/approved/changes), deletes the claim comment, and submit
 ### Utilities
 
 ```bash
+/ghw poll issue
+```
+Lists top 10 open issues in `wip.json`'s repo (oldest first).
+
+```bash
+/ghw poll pr
+```
+Lists top 10 open PRs in `wip.json`'s repo (oldest first).
+
+```bash
 /ghw poll
 ```
-Scans `wip.json`'s repo for:
-- New issues (last 24h)
-- Unclaimed PRs (not reviewed yet)
-- Merge-ready PRs (approved, waiting for merge)
+Lists both open issues and PRs (oldest first).
 
 ```bash
 /ghw config
@@ -239,8 +246,9 @@ Agent: Issue #45 created
 # --- Later, another developer picks up the PR review ---
 You: /ghw review
 Agent: eyes Claimed PR #78: Add OAuth login support
+       Linked Issue: Add OAuth login support
        Files changed: 3 (+120 -45)
-       Agent reviews the diff, then calls: /ghw review d #78 approved
+       Agent reviews the diff, then: /ghw review #78 approved
 ```
 
 ---

@@ -95,16 +95,16 @@ Result written to wip.json.branch.
 ```
 /ghw review
 ```
-From wip.json's repo, finds the earliest unclaimed open PR and:
-1. Claims it with eyes (prevents other reviewers)
-2. Posts a review checklist to the PR
-3. Returns PR title, URL, files changed summary, and checklist
+Finds the earliest unclaimed open PR in wip.json's repo and:
+1. Claims it with eyes
+2. Posts a review checklist
+3. Returns PR title, linked issue, diff, and checklist
 
-Agent then reviews the PR diff and calls:
+Agent reviews the diff against the issue, then calls:
 ```
-/ghw review d #<pr> [approved|changes]
+/ghw review #<pr> approved   # or changes
 ```
-Posts the verdict, deletes the claim comment, submits the GitHub Official Review.
+Posts verdict, releases claim, submits GitHub Official Review.
 
 
 
@@ -113,7 +113,8 @@ Posts the verdict, deletes the claim comment, submits the GitHub Official Review
 ```
 /ghw issue              # Lists open issues in current repo (from wip.json)
 /ghw show #<id>         # Shows Issue #<id> details
-/ghw poll               # Polls all repos for new issues and unclaimed PRs
+/ghw poll issue         # Top 10 open issues, oldest first
+/ghw poll pr           # Top 10 open PRs, oldest first
 /ghw config            # Shows config and wip.json contents
 ```
 
