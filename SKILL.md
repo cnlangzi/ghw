@@ -1,133 +1,199 @@
 ---
 name: gtw
-description: gtw - Git Team Workflow automation with auto-driven PR review. Label-based state machine.
+description: gtw - GitHub team workflow skill. Session-based workflow with LLM-assisted issue generation and git operations.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
-# gtw - Git Team Workflow
+# gtw (gtw)
 
-Session-based issue generation, git operations, and auto-driven PR review via CLI.
+GitHub team collaboration workflow skill. Session-based design: drafts go to wip.json, confirm before executing.
 
-## Core Design
+## Usage
 
-**Two-phase confirm pattern**: all write operations are drafts until `/gtw confirm`:
-- `/gtw on` + `/gtw new/fix/pr` write drafts to `wip.json` (no API calls)
-- `/gtw confirm` executes all pending actions at once, then clears
+```
+/gtw <command> [args]
+```
 
-**Label-based review**: agents claim PRs via `ghw/wip`, verdict via `ghw/lgtm` or `ghw/revise`.
+## Configuration
+
+```json
+"skills": {
+  "entries": {
+    "gtw": {
+      "env": {
+        "GITHUB_ACCESS_TOKEN": "ghp_xxx",
+      }
+    }
+  }
+}
+```
+
 
 ---
 
-## Session Commands (write to wip.json)
+## Command Reference
+
+### Workflow Setup
 
 ```
 /gtw on <workdir>
-    Set workdir and repo in session context. Required first step.
+```
+Resolves git remote from a local directory and writes it to wip.json. All subsequent commands use this repo.
 
+```
 /gtw new
-    Create an issue draft in session context. Agent fills title/body from conversation. No API call.
+```
+LLM reads the conversation, generates an Issue draft (title + body), and writes it to wip.json. No GitHub API call.
 
-/gtw update #<id> [title]
-    Update an existing issue draft in session context. No API call.
+```
+/gtw update #<id>
+```
+LLM re-reads the conversation to update Issue #<id>'s draft in wip.json.
 
+```
 /gtw confirm
-    Execute all pending actions from session:
-    - issue (create/update)
-    - GitHub branch ref (if branch.name + issue.id)
-    - PR (if pr.title)
-    - push (commit + push)
-    Then clear session.
 ```
+Executes all pending operations in wip.json:
+- `issue.action == 'create'` -> creates Issue
+- `issue.action == 'update'` -> updates Issue
+- `branch.name` is set -> creates branch (linked to issue)
+- `pr.title` is set -> creates Pull Request (linked to issue)
+After execution, wip.json is cleared.
 
 ---
 
-## Git Operations
+### Git Operations
 
 ```
-/gtw fix [branch-name]
-    Create local branch (fetch/rebase main + checkout -b).
-    Writes branch to session. No push, no GitHub ref.
+/gtw fix [name]
+```
+- `git fetch origin`
+- `git checkout main`
+- `git pull --rebase origin main`
+- `git checkout -b <name>` (default: `fix/<timestamp>`)
+Result written to wip.json.branch.
 
-/gtw pr [title]
-    Push branch to origin. Generate PR draft in session.
-    No PR created on GitHub until /gtw confirm.
+```
+/gtw pr
+```
+- `git push -u origin <branch>`
+- Generates PR title/body (linked to issue)
+- Result written to wip.json.pr — execute with `/gtw confirm`
 
+```
 /gtw push
-    git add -A, show diff summary. Agent generates commit message. /gtw confirm commits and pushes.
 ```
+- `git add -A`
+- Shows staged changes summary
+- LLM generates a [Conventional Commits](https://www.conventionalcommits.org/) formatted commit message
+- `git commit && git push`
 
 ---
 
-## Automation Pool
-
-```
-/gtw auto add <owner/repo>
-    Add repo to automation pool. Creates ghw/* labels on first use.
-
-/gtw auto remove <owner/repo>
-    Remove repo from automation pool.
-
-/gtw auto list
-    List all repos in the automation pool.
-```
-
----
-
-## Auto-Driven Review
+### Review
 
 ```
 /gtw review
-    Pick a repo (round-robin), find oldest ghw/ready PR, claim it
-    (ghw/ready -> ghw/wip), return PR diff + linked issue for review.
-
-/gtw review #<pr> lgtm|revise
-    - lgtm  -> ghw/wip -> ghw/lgtm
-    - revise -> ghw/wip -> ghw/revise
 ```
+From wip.json's repo, finds the earliest unclaimed open PR and immediately:
+1. Posts a 👀 claim comment (prevents other reviewers from picking it up)
+2. Attaches a review checklist
 
-Review flow:
-1. PR created with ghw/ready label
-2. `/gtw review` -> agent claims ghw/wip, returns diff
-3. Agent reviews diff + linked issue
-4. `/gtw review #<pr> lgtm` or `revise` -> updates label only
-5. Developer fixes -> re-adds ghw/ready -> loop
+**Review Checklist** (written to the PR comment):
+```
+## Review Checklist
+- [ ] Does the implementation match the Issue requirements?
+- [ ] Are there any out-of-scope changes?
+- [ ] Are there any missing pieces?
+```
+During review, manually update `[ ]` -> `[x]` as you verify each item.
+
+```
+/gtw review d <pr-ref> [approved|changes]
+```
+Completes the review:
+- If not all items are `[x]` -> error listing unchecked items
+- If all checked -> deletes claim comment, posts ✅/❌ verdict, submits GitHub Official Review
 
 ---
 
-## Info
+### Information
 
 ```
-/gtw issue [owner/repo] [--state=open|closed|all]
-    List open issues in repo. Uses session repo context if not provided.
-
-/gtw show #<pr>
-    Show PR/issue details. Uses session or review context.
-
-/gtw config
-    Show config status: token, session (wip.json), pool repos.
+/gtw issue              # Lists open issues in current repo (from wip.json)
+/gtw show #<id>         # Shows Issue #<id> details
+/gtw poll               # Polls all repos for new issues and unclaimed PRs
+/gtw config            # Shows config and wip.json contents
 ```
 
 ---
 
-## Full Workflow
+## wip.json Schema
+
+File: `~/.openclaw/gtw/wip.json`
+
+```json
+{
+  "workdir": "/path/to/workdir",
+  "repo": "owner/repo",
+  "issue": { "action": "create|update", "id": null, "title": "", "body": "" },
+  "branch": { "name": "" },
+  "pr": { "title": "", "body": "" },
+  "createdAt": "ISO"
+}
+```
+
+---
+
+## Standard Workflow
 
 ```
-# Developer: create PR via session
-/gtw on ~/code/project
-/gtw new
-/gtw fix feature/123
-  -> coding...
-/gtw push
-/gtw confirm "feat: add oauth login"
-  -> commits and pushes (via push session)
-  -> creates issue (via new session)
-  -> creates GitHub branch + PR (via confirm)
+You: /gtw on ~/code/myproject
+Agent: workdir set, repo: owner/repo
 
-# Agent: review via automation pool
-/gtw auto add owner/project
-/gtw review
-  -> claims PR, returns diff
-  -> agent reviews
-/gtw review #45 lgtm
-  -> ghw/lgtm label applied
+You: /gtw new
+Agent: Generates Issue draft:
+       Title: xxx
+       Body: ...
+       [wip.json — run /gtw confirm]
+
+You: /gtw fix login-bug
+Agent: Branch fix/login-bug created (rebased on main)
+       [wip.json — run /gtw confirm]
+
+You: /gtw pr
+Agent: Branch pushed. Run /gtw confirm
+
+You: /gtw confirm
+Agent: Issue #45 created
+       Branch created
+       PR #78 created
+       [wip.json cleared]
 ```
+
+---
+
+## Cron Configuration
+
+```json
+"cron": {
+  "entries": {
+    "gtw-poll": {
+      "schedule": "*/15 * * * *",
+      "task": "/gtw poll",
+      "enabled": false
+    }
+  }
+}
+```
+
+---
+
+## Implementation
+
+- **Entry**: `scripts/index.js` (Node.js, no npm dependencies)
+- **Token**: PAT or OAuth Device Flow
+- **Git**: Direct local git command execution
+- **GitHub API**: REST API v3
+- **Storage**: `~/.openclaw/gtw/wip.json` (0600)
+- **Dependencies**: None (pure Node.js built-ins only)

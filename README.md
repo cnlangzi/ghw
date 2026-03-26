@@ -1,95 +1,337 @@
-# gtw - Git Team Workflow
+# gtw
 
-> Session-based GitHub workflow automation with auto-driven PR review.
+> GitHub team workflow automation - session-based issue generation, git operations, and PR review coordination via CLI.
 
-`gtw` brings structured GitHub workflows to your OpenClaw chat interface. Issues and PRs are drafted first, confirmed later — no accidental API calls. Review is auto-driven via label state machine.
+`gtw` is a skill for [OpenClaw](https://github.com/openclaw/openclaw) that brings structured, LLM-assisted GitHub workflows to your chat interface. Define issues from conversations, manage branches and PRs with a two-phase confirm pattern, and coordinate reviews with an emoji protocol.
 
 ## Features
 
-- **Session-based**: `/gtw on` sets context; all write ops are drafts until `/gtw confirm`
-- **Two-phase confirm**: issue drafts, branch creation, and PR creation all deferred to `/gtw confirm`
-- **Auto-driven review**: `/gtw review` picks oldest ghw/ready PR, agent reviews diff, verdict via label
-- **Label protocol**: ghw/ready → ghw/wip → ghw/lgtm | ghw/revise
-- **No dependencies**: pure Node.js, no npm packages needed
+- **Session-based workflow** - Draft in `wip.json`, confirm when ready. No accidental API calls.
+- **LLM-assisted issue creation** - `/gtw new` reads the conversation and generates a properly structured issue. No copy-paste.
+- **Git operations** - `fix`, `push`, and `pr` commands wrap standard git workflows with semantic commit log generation.
+- **Emoji review protocol** - eyes claim -> checklist -> approved/changes verdict. No concurrent reviews, no confusion.
+- **Multi-repo ready** - Start with any repo by pointing to its local working copy. Switch repos mid-session with `/gtw on`.
+- **Zero external dependencies** - Plain Node.js, no npm packages needed.
 
 ## Installation
 
-```bash
-# Clone and link
-git clone https://github.com/cnlangzi/gtw.git
-cp -r gtw ~/workspace/skills/
+### 1. Clone the repo
 
-# Configure token
-# Add to ~/.openclaw/openclaw.json:
-# "skills": { "entries": { "gtw": { "enabled": true, "env": { "GITHUB_ACCESS_TOKEN": "ghp_xxx" } } } }
+```bash
+git clone https://github.com/cnlangzi/gtw.git
+cd gtw
 ```
+
+### 2. Install the skill
+
+The skill follows the OpenClaw AgentSkills directory structure:
+
+```
+gtw/     <- skill directory (name used as /gtw slash command)
+├── SKILL.md     <- this file
+├── README.md
+├── scripts/
+│   └── index.js <- executable entry point
+└── references/
+```
+
+Copy or symlink to your OpenClaw workspace:
+
+```bash
+cp -r gtw ~/workspace/skills/
+```
+
+Or use the OpenClaw CLI:
+
+```bash
+openclaw skills install ./gtw
+```
+
+### 3. Configure credentials
+
+Add to `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "skills": {
+    "entries": {
+      "gtw": {
+        "enabled": true,
+        "env": {
+          "GITHUB_ACCESS_TOKEN": "ghp_your_personal_access_token",
+        }
+      }
+    }
+  }
+}
+```
+
+#### Getting a GitHub Personal Access Token
+
+1. Go to **GitHub -> Settings -> Developer settings -> Personal access tokens -> Generate new token (classic)**
+2. Grant the `repo` scope
+3. Copy the token and paste into `GITHUB_ACCESS_TOKEN`
+
+### 4. Authenticate (optional, for OAuth Device Flow)
+
+If you prefer OAuth instead of PAT:
+
+1. Create a GitHub OAuth App: **Settings -> Developer settings -> OAuth Apps -> New OAuth App**
+   - Callback URL: `http://localhost`
+2. Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in the skill env
+3. Run `/gtw auth` to initiate the OAuth flow
+
+---
 
 ## Commands
 
-### Session Setup
-| Command | Description |
-|---------|-------------|
-| `/gtw on <workdir>` | Set workdir + repo in session |
-| `/gtw new` | Issue draft from conversation (no API) |
-| `/gtw update #<id> [title]` | Update issue draft (no API) |
-| `/gtw confirm` | Execute all: issue + branch + PR, then clear session |
+All commands are invoked via `/gtw <command>` in your OpenClaw chat interface.
+
+### Workflow Setup
+
+```bash
+/gtw on <workdir>
+```
+Resolves the git remote from a local directory and writes it to `wip.json`. All subsequent commands use this repo.
+
+```bash
+# Examples
+/gtw on ~/code/myproject
+/gtw on /Users/name/code/myproject
+```
+
+---
+
+### Issue Management
+
+```bash
+/gtw new
+```
+Reads the conversation history, uses LLM to extract and structure a GitHub issue (title + body), and writes it to `wip.json`. **No GitHub API call is made.**
+
+```bash
+/gtw update #<id>
+```
+LLM re-reads the conversation to update Issue `#<id>`'s draft in `wip.json`.
+
+```bash
+/gtw confirm
+```
+Executes all pending operations in `wip.json`:
+- `issue.action == 'create'` -> creates a new GitHub Issue
+- `issue.action == 'update'` -> updates Issue `#<id>`
+- `branch.name` is set -> creates a GitHub branch and links it to the issue
+- `pr.title` is set -> creates a Pull Request linked to the issue
+
+After execution, `wip.json` is cleared.
+
+```bash
+/gtw issue
+```
+Lists all open issues in the current repo (from `wip.json`).
+
+```bash
+/gtw show #<id>
+```
+Shows full details of Issue `#<id>`.
+
+---
 
 ### Git Operations
-| Command | Description |
-|---------|-------------|
-| `/gtw fix [name]` | Create local branch (rebased on main) |
-| `/gtw pr [title]` | Push branch, PR draft in session |
-| `/gtw push` | Stage diff, commit via confirm |
 
-### Review
-| Command | Description |
-|---------|-------------|
-| `/gtw review` | Claim oldest ghw/ready PR |
-| `/gtw review #<pr> lgtm\|revise` | Verdict: ghw/lgtm or ghw/revise |
-
-### Pool & Info
-| Command | Description |
-|---------|-------------|
-| `/gtw auto add\|remove\|list` | Manage automation pool |
-| `/gtw issue [owner/repo]` | List open issues |
-| `/gtw show #<pr>` | Show PR/issue details |
-| `/gtw config` | Show token + wip.json + pool |
-
-## Label States
-
-| Label | State | Set By |
-|-------|-------|--------|
-| `ghw/ready` | Waiting for review | Developer (`/gtw confirm`) |
-| `ghw/wip` | Review in progress | Agent (`/gtw review`) |
-| `ghw/lgtm` | Approved | Agent (`/gtw review # pr lgtm`) |
-| `ghw/revise` | Changes requested | Agent (`/gtw review # pr revise`) |
-
-## Workflow
-
+```bash
+/gtw fix [name]
 ```
-# Developer creates PR
-/gtw on ~/code/project
-/gtw new
-/gtw fix feature/123
-  -> coding...
+Performs a clean branch workflow:
+1. `git fetch origin`
+2. `git checkout main`
+3. `git pull --rebase origin main`
+4. `git checkout -b <name>` (default: `fix/<timestamp>`)
+
+Result is written to `wip.json` as the pending branch.
+
+```bash
+/gtw pr
+```
+1. Pushes the current branch to origin
+2. Generates a PR title and body linked to the associated issue
+3. Writes to `wip.json` - execute with `/gtw confirm`
+
+```bash
 /gtw push
-/gtw confirm
-  -> creates issue + GitHub branch + PR with ghw/ready
+```
+1. `git add -A`
+2. Shows staged changes summary
+3. LLM generates a [Conventional Commits](https://www.conventionalcommits.org/) formatted commit message
+4. `git commit && git push`
 
-# Agent reviews
-/gtw auto add owner/project   # one-time pool setup
+---
+
+### Code Review
+
+```bash
 /gtw review
-  -> ghw/wip Claimed PR #45 with diff
-  -> agent reviews
-/gtw review #45 lgtm
-  -> ghw/lgtm applied
+```
+From `wip.json`'s repo, finds the earliest unclaimed open PR and immediately:
+1. Posts a eyes claim comment (prevents other reviewers from picking it up)
+2. Attaches a review checklist
+3. Returns the PR for manual review
+
+**Review Checklist** (written to the PR comment):
+```
+## Review Checklist
+
+Check each item. Mark [x] when verified:
+
+  - [ ] Does the implementation match the Issue requirements?
+  - [ ] Are there any out-of-scope changes?
+  - [ ] Are there any missing pieces?
+
+---
+_Run /gtw review d after all items are [x]_
 ```
 
-## Session File
+During review, manually update `[ ]` -> `[x]` in the comment as you verify each item.
+
+```bash
+/gtw review d <pr-ref> [approved|changes]
+```
+Completes the review:
+- If not all checklist items are `[x]` -> error listing unchecked items
+- If all checked -> deletes the claim comment, posts approved/changes verdict, submits the GitHub Official Review
+
+```bash
+# Examples
+/gtw review d #45 approved       # Approves PR #45
+/gtw review d owner/repo#78 changes  # Requests changes on PR #78 in owner/repo
+```
+
+---
+
+### Utilities
+
+```bash
+/gtw poll
+```
+Scans `wip.json`'s repo for:
+- New issues (last 24h)
+- Unclaimed PRs (not reviewed yet)
+- Merge-ready PRs (approved, waiting for merge)
+
+```bash
+/gtw config
+```
+Shows current configuration, token status, and `wip.json` contents.
+
+---
+
+## Workflow Example
 
 ```
-~/.openclaw/gtw/
-├── config.json   # automation pool repos + lastRepo
-├── token.json    # GitHub OAuth token
-└── wip.json      # session context (workdir, repo, issue/branch/pr drafts)
+You: /gtw on ~/code/myproject
+Agent: workdir set, repo: cnlangzi/myproject
+
+You: /gtw new
+Agent: Based on the conversation, here's the issue draft:
+       Title: Add OAuth login support
+       Body:  ## Description ...
+              ## Scope ...
+              ## Acceptance Criteria ...
+       [Written to wip.json - run /gtw confirm]
+
+You: /gtw fix login-oauth
+Agent: Branch fix/login-oauth created (rebased on main)
+       [Written to wip.json - run /gtw confirm]
+
+You: /gtw pr
+Agent: Branch pushed. Run /gtw confirm to create PR
+
+You: /gtw confirm
+Agent: Issue #45 created
+       Branch created
+       PR #78 created
+       [wip.json cleared]
+
+# --- Later, another developer picks up the PR review ---
+You: /gtw review
+Agent: eyes Claimed PR #78: Add OAuth login support
+       Review the code, check the [ ] items, then /gtw review d #78
 ```
+
+---
+
+## Architecture
+
+```
+~/.openclaw/gtw/          # Runtime state (skill creates this)
+├── wip.json      # Work In Progress draft state
+├── token.json    # OAuth access token (0600)
+└── state.json    # Optional persistent state
+
+skill directory structure:
+gtw/
+├── SKILL.md       # This file
+├── README.md
+├── scripts/
+│   └── index.js   # Executable entry point
+└── references/
+```
+
+### `wip.json` schema
+
+```json
+{
+  "workdir": "/home/user/code/myproject",
+  "repo": "cnlangzi/myproject",
+  "issue": {
+    "action": "create | update",
+    "id": null,
+    "title": "Issue title",
+    "body": "Issue body (markdown)"
+  },
+  "branch": {
+    "name": "fix/login-oauth"
+  },
+  "pr": {
+    "title": "PR title",
+    "body": "PR body"
+  },
+  "createdAt": "2026-03-26T00:00:00.000Z"
+}
+```
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GITHUB_ACCESS_TOKEN` | Yes | - | GitHub Personal Access Token |
+| `GITHUB_CLIENT_ID` | No | - | For OAuth Device Flow (instead of PAT) |
+| `GITHUB_CLIENT_SECRET` | No | - | For OAuth Device Flow |
+
+---
+
+## Contributing
+
+Contributions are welcome. Please read the workflow design before making significant changes.
+
+### Commit Message Format
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+---
+
+## License
+
+MIT

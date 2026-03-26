@@ -1,50 +1,48 @@
 #!/usr/bin/env node
 /**
- * gtw - Git Team Workflow automation
- * Session-based issue generation, git operations, and auto-driven PR review.
- *
- * Labels (ghw/*):
- *   ghw/ready   - PR created, waiting for review
- *   ghw/wip     - Review in progress
- *   ghw/lgtm    - Approved
- *   ghw/revise  - Changes requested
+ * github-work skill - GitHub Team Workflow
+ * Commands: start, new, update, confirm, fix, pr, push, review, issue, show, poll, config, pending
  */
 
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { execSync } = require('child_process');
+const { execSync, exec } = require('child_process');
 const os = require('os');
 
 const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'gtw');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const wip_FILE = path.join(CONFIG_DIR, 'wip.json');
+const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 
-[CONFIG_DIR].forEach(d => { if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); fs.chmodSync(d, 0o700); } });
+// Ensure config dir
+[CONFIG_DIR].forEach(d => { if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); fs.chmodSync(d, '0700'); } });
 
+// --- Env ---
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const ACCESS_TOKEN = process.env.GITHUB_ACCESS_TOKEN || '';
 
-const LABELS = { READY: 'ghw/ready', WIP: 'ghw/wip', LGTM: 'ghw/lgtm', REVISE: 'ghw/revise' };
-const LABEL_LIST = Object.values(LABELS);
-
 // --- GitHub API ---
-function apiRequest(method, endpoint, token, body) {
+function apiRequest(method, endpoint, token, body = null) {
   return new Promise((resolve, reject) => {
-    const urlObj = new URL('https://api.github.com' + endpoint);
+    const url = `https://api.github.com${endpoint}`;
+    const urlObj = new URL(url);
     const bodyStr = body ? JSON.stringify(body) : null;
-    const options = { hostname: urlObj.hostname, port: 443, path: urlObj.pathname + urlObj.search, method, headers: { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'gtw/1.0' } };
+    const options = {
+      hostname: urlObj.hostname, port: 443, path: urlObj.pathname + urlObj.search, method,
+      headers: { 'Accept': 'application/vnd.github+json', 'Authorization': `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'gtw/1.0' },
+    };
     if (bodyStr) { options.headers['Content-Type'] = 'application/json'; options.headers['Content-Length'] = Buffer.byteLength(bodyStr); }
     const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
+      let data = ''; res.on('data', c => data += c);
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
           if (res.statusCode >= 200 && res.statusCode < 300) resolve(parsed);
-          else reject(new Error('GitHub API ' + res.statusCode + ': ' + JSON.stringify(parsed)));
-        } catch (e) { reject(new Error('Parse error (' + res.statusCode + '): ' + data.substring(0, 200))); }
+          else reject(new Error(`GitHub API ${res.statusCode}: ${JSON.stringify(parsed)}`));
+        } catch (e) { reject(new Error(`Parse error (${res.statusCode}): ${data.substring(0, 200)}`)); }
       });
     });
     req.on('error', reject);
@@ -57,328 +55,435 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // --- File helpers ---
 function readJSON(file) { try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null; } catch (e) { return null; } }
-function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); fs.chmodSync(file, 0o600); }
-function getWip() { return readJSON(wip_FILE) || {}; }
-function saveWip(p) { writeJSON(wip_FILE, p); }
-function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
-function getConfig() { return readJSON(CONFIG_FILE) || { repos: [], lastRepo: null }; }
-function saveConfig(data) { writeJSON(CONFIG_FILE, data); }
+function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); fs.chmodSync(file, '0600'); }
 
 // --- Token ---
-function getToken() { if (ACCESS_TOKEN) return ACCESS_TOKEN; const t = readJSON(TOKEN_FILE); if (!t || !t.access_token) throw new Error('Not authenticated. Run /gtw auth or set GITHUB_ACCESS_TOKEN'); return t.access_token; }
+function getToken() {
+  if (ACCESS_TOKEN) return ACCESS_TOKEN;
+  const t = readJSON(TOKEN_FILE);
+  if (!t?.access_token) throw new Error('Not authenticated. Run /gtw auth or set GITHUB_ACCESS_TOKEN');
+  return t.access_token;
+}
 function saveToken(t) { writeJSON(TOKEN_FILE, t); }
 
-// --- OAuth Device Flow ---
-function postForm(urlStr, data) {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(urlStr);
-    const bodyStr = Object.entries(data).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
-    const options = { hostname: urlObj.hostname, port: 443, path: urlObj.pathname, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(bodyStr), 'Accept': 'application/json', 'User-Agent': 'gtw/1.0' } };
-    const req = https.request(options, (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { resolve(d); } }); });
-    req.on('error', reject); req.write(bodyStr); req.end();
-  });
+// --- OAuth ---
+async function cmdAuth() {
+  return await deviceFlow();
 }
 
 async function deviceFlow() {
   if (!CLIENT_ID) throw new Error('GITHUB_CLIENT_ID not configured');
-  const codeResp = await postForm('https://github.com/login/device/code', { client_id: CLIENT_ID, scope: 'repo' });
-  if (!codeResp.device_code) throw new Error('Device flow failed: ' + JSON.stringify(codeResp));
-  console.log('Open: https://github.com/login/device  Enter code: ' + codeResp.user_code + '  Waiting...');
+  const codeResp = await postForm('https://github.com/login/device/code', { client_id: CLIENT_ID, scope: 'repo workflow' });
+  if (!codeResp.device_code) throw new Error(`Device flow failed: ${JSON.stringify(codeResp)}`);
+  console.log(`\n🔗 Open: https://github.com/login/device\n   Enter code: ${codeResp.user_code}\nWaiting...`);
   let attempts = (codeResp.expires_in || 300) / (codeResp.interval || 5);
   while (attempts-- > 0) {
     await sleep((codeResp.interval || 5) * 1000);
     const r = await postForm('https://github.com/login/oauth/access_token', { client_id: CLIENT_ID, device_code: codeResp.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' });
-    if (r.access_token) { saveToken({ access_token: r.access_token }); console.log('Auth successful!'); return readJSON(TOKEN_FILE); }
+    if (r.access_token) { saveToken({ access_token: r.access_token }); console.log('✅ Auth successful!'); return readJSON(TOKEN_FILE); }
     if (r.error === 'authorization_pending') { process.stdout.write('.'); continue; }
     if (r.error === 'slow_down') { await sleep((codeResp.interval || 5) * 1000); continue; }
-    throw new Error('OAuth error: ' + r.error);
+    throw new Error(`OAuth error: ${r.error}`);
   }
   throw new Error('Auth timed out');
 }
 
+function postForm(urlStr, data) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(urlStr);
+    const body = Object.entries(data).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const options = { hostname: urlObj.hostname, port: 443, path: urlObj.pathname, method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body), 'Accept': 'application/json', 'User-Agent': 'gtw/1.0' } };
+    const req = https.request(options, (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { resolve(d); } }); });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+
+// --- Config ---
+function getConfig() { return readJSON(CONFIG_FILE) || { repos: [], lastRepo: null }; }
+function saveConfig(data) { writeJSON(CONFIG_FILE, data); }
+
+// --- Pending state ---
+function getWip() { const p = readJSON(wip_FILE); return p || {}; }
+function saveWip(p) { writeJSON(wip_FILE, p); }
+function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
+
 // --- Git helpers ---
 function git(cmd, cwd) {
-  try { return execSync(cmd, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
-  catch (e) { throw new Error('Git error: ' + e.message); }
+  try { return execSync(cmd, { cwd: cwd || process.cwd(), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
+  catch (e) { throw new Error(`Git error: ${e.message}`); }
 }
 
 function getRemoteRepo(workdir) {
   const remotes = git('git remote -v', workdir).split('\n');
-  const match = remotes.find(l => l.includes('origin'));
-  if (!match) throw new Error('No origin remote found');
+  const match = remotes.find(l => l.includes('origin') && (l.includes('github.com') || l.includes('git@')));
+  if (!match) throw new Error('No origin remote found in ' + workdir);
+  // git@github.com:owner/repo.git or https://github.com/owner/repo.git
   const m = match.match(/git@github\.com:([^/]+\/[^.]+)\.git/) || match.match(/https:\/\/github\.com\/([^/]+\/[^/]+)/);
-  if (!m) throw new Error('Cannot parse remote: ' + match);
+  if (!m) throw new Error(`Cannot parse remote URL: ${match}`);
   return m[1];
 }
 
-function getCurrentBranch(cwd) { return git('git branch --show-current', cwd); }
-function getDefaultBranch(cwd) { try { return execSync('git symbolic-ref refs/remotes/origin/HEAD', { encoding: 'utf8' }).trim().split('/').pop(); } catch (e) {} return 'main'; }
-
-// --- Labels ---
-function ensureLabels(token, repo) {
-  return Promise.all(LABEL_LIST.map(name => apiRequest('POST', '/repos/' + repo + '/labels', token, { name, color: '4B9CDA', description: 'gtw label: ' + name }).catch(() => {})));
+function getCurrentBranch(cwd) {
+  return git('git branch --show-current', cwd);
 }
 
-async function setLabel(token, repo, prNumber, newLabel) {
-  const issueResp = await apiRequest('GET', '/repos/' + repo + '/issues/' + prNumber, token);
-  const ghwLabels = (issueResp.labels || []).filter(l => l.name && l.name.startsWith('ghw/'));
-  await Promise.all(ghwLabels.map(l => apiRequest('DELETE', '/repos/' + repo + '/issues/' + prNumber + '/labels/' + encodeURIComponent(l.name), token).catch(() => {})));
-  await apiRequest('POST', '/repos/' + repo + '/issues/' + prNumber + '/labels', token, { labels: [newLabel] });
+function getDefaultBranch(cwd) {
+  const remote = git('git remote get-url origin', cwd);
+  // Try git symbolic-ref first
+  try { return execSync('git symbolic-ref refs/remotes/origin/HEAD', { encoding: 'utf8' }).trim().split('/').pop(); } catch(e) {}
+  return 'main';
 }
 
-// ============================================================
-// SESSION-BASED COMMANDS
-// All git operations write to wip.json; /gtw confirm executes.
-// ============================================================
+// --- Review checklist ---
+const REVIEW_ITEMS = [
+  'Does the implementation match the Issue requirements?',
+  'Are there any out-of-scope changes?',
+  'Are there any missing pieces?',
+];
 
-// on: set workdir + repo in session context
+function buildChecklist() {
+  return '## Review Checklist\n\nCheck each item. Mark [x] when verified:\n\n' + REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n') + '\n\n---\n_💡 Run /gtw review d after all items are [x]_';
+}
+
+function parseChecklist(comments, login) {
+  const mine = comments.filter(c => c.user?.login === login);
+  const items = [];
+  for (const c of mine) {
+    for (const line of c.body.split('\n')) {
+      const m = line.match(/^\s*-\s*\[([ x])\]\s*(.+)/);
+      if (m) items.push({ checked: m[1] === 'x', text: m[2].trim() });
+    }
+  }
+  return items;
+}
+
+// --- Commands ---
+
 async function cmdOn(args) {
   const workdir = args[0];
   if (!workdir) throw new Error('Usage: /gtw on <workdir>');
+  // Expand ~ to home directory
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
-  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
+  if (!path.isAbsolute(absWorkdir)) throw new Error('Please use an absolute path, e.g. /Users/name/code/myproject or ~/code/myproject');
+  if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
   const repo = getRemoteRepo(absWorkdir);
   const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
   saveWip(wip);
-  return { ok: true, workdir: absWorkdir, repo, message: 'Workdir set to ' + absWorkdir + ', repo: ' + repo };
+  return { ok: true, workdir: absWorkdir, repo, message: `Workdir set to ${absWorkdir}, repo: ${repo}` };
 }
 
-// new: create issue draft in session (no API call)
 async function cmdNew(args) {
+  // args: [title, body] or empty (agent will fill)
   const wip = getWip();
   if (!wip.repo) throw new Error('No repo set. Run /gtw on <workdir> first');
   const title = args[0] || '';
   const body = args.slice(1).join(' ') || '';
-  const updated = Object.assign({}, wip, { issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() });
+  const updated = { ...wip, issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() };
   saveWip(updated);
-  return { ok: true, wip: updated, message: title ? 'Issue draft saved: ' + title : 'Issue draft saved (title/body will be filled by agent)' };
+  return { ok: true, wip: updated, message: title ? `Issue draft saved: "${title}"` : 'Issue draft saved (title/body will be filled by agent)' };
 }
 
-// update: update issue draft in session (no API call)
 async function cmdUpdate(args) {
+  // args: [#id, title, body]
   const id = parseInt(args[0], 10);
-  if (isNaN(id)) throw new Error('Usage: /gtw update #<id> [title]');
+  if (isNaN(id)) throw new Error('Usage: /gtw update #<id> [title] [body...]');
   const wip = getWip();
   if (!wip.repo) throw new Error('No repo set. Run /gtw on <workdir> first');
-  const rest = args.slice(1).join(' ');
-  const updated = Object.assign({}, wip, { issue: { action: 'update', id, title: rest, body: '' }, updatedAt: new Date().toISOString() });
+  const title = args.slice(1).filter((_,i) => i % 2 === 0).join(' ') || '';
+  const body = args.slice(2).filter((_,i) => i % 2 === 1).join(' ') || '';
+  const updated = { ...wip, issue: { action: 'update', id, title, body }, updatedAt: new Date().toISOString() };
   saveWip(updated);
-  return { ok: true, wip: updated, message: 'Issue #' + id + ' update draft saved' };
+  return { ok: true, wip: updated, message: `Issue #${id} update draft saved` };
 }
 
-// confirm: execute all pending actions from wip.json, then clear
 async function cmdConfirm(args) {
   const token = getToken();
   const wip = getWip();
-  if (!wip.repo) throw new Error('No session. Run /gtw on <workdir> first');
+  if (!wip.repo) throw new Error('No wip action. Run /gtw on + /gtw new first');
   const results = [];
-  const repo = wip.repo;
 
-  // Issue create/update
-  if (wip.issue && wip.issue.title) {
+  // Issue
+  if (wip.issue?.title) {
     const { action, id, title, body } = wip.issue;
     if (action === 'create') {
-      const data = await apiRequest('POST', '/repos/' + repo + '/issues', token, { title, body: body || 'Created via gtw' });
+      const data = await apiRequest('POST', `/repos/${wip.repo}/issues`, token, { title, body: body || `Created via github-work skill` });
       results.push({ type: 'issue', action: 'created', id: data.number, url: data.html_url });
     } else if (action === 'update' && id) {
-      const data = await apiRequest('PATCH', '/repos/' + repo + '/issues/' + id, token, { title, body });
+      const data = await apiRequest('PATCH', `/repos/${wip.repo}/issues/${id}`, token, { title, body });
       results.push({ type: 'issue', action: 'updated', id, url: data.html_url });
     }
   }
 
-  // Git branch creation on GitHub (only if we have an issue id to link to)
-  if (wip.branch && wip.branch.name && wip.issue && wip.issue.id) {
+  // Branch
+  if (wip.branch?.name && wip.issue?.id) {
+    const issueNum = wip.issue.id;
     const branchName = wip.branch.name;
-    const shaResp = await apiRequest('GET', '/repos/' + repo + '/git/ref/heads/' + getDefaultBranch(wip.workdir), token);
-    await apiRequest('POST', '/repos/' + repo + '/git/refs', token, { ref: 'refs/heads/' + branchName, sha: shaResp.object.sha });
-    const parts = repo.split('/');
-    try { await apiRequest('POST', '/repos/' + parts[0] + '/' + parts[1] + '/issues/' + wip.issue.id + '/labels', token, { labels: ['branch:' + branchName] }); } catch (e) {}
+    const workdir = wip.workdir;
+    const [owner, repoName] = wip.repo.split('/');
+    const shaResp = await apiRequest('GET', `/repos/${wip.repo}/git/ref/heads/${getDefaultBranch(workdir)}`, token);
+    await apiRequest('POST', `/repos/${wip.repo}/git/refs`, token, { ref: `refs/heads/${branchName}`, sha: shaResp.object.sha });
+    try { await apiRequest('POST', `/repos/${owner}/${repoName}/issues/${issueNum}/labels`, token, { labels: [`branch:${branchName}`] }); } catch(e) {}
     results.push({ type: 'branch', action: 'created', name: branchName });
   }
 
-  // PR creation
-  if (wip.pr && wip.pr.title) {
-    await ensureLabels(token, repo);
-    const baseBranch = getDefaultBranch(wip.workdir);
-    const headBranch = wip.branch ? wip.branch.name : getCurrentBranch(wip.workdir);
-    const body = wip.pr.body || 'Closes #' + (wip.issue ? wip.issue.id : '?');
-    const data = await apiRequest('POST', '/repos/' + repo + '/pulls', token, { title: wip.pr.title, body, head: headBranch, base: baseBranch });
-    await setLabel(token, repo, data.number, LABELS.READY);
-    results.push({ type: 'pr', action: 'created', id: data.number, url: data.html_url, label: 'ghw/ready' });
+  // PR
+  if (wip.pr?.title) {
+    const workdir = wip.workdir;
+    const baseBranch = getDefaultBranch(workdir);
+    const headBranch = wip.branch?.name || getCurrentBranch(workdir);
+    const body = wip.pr.body || `Closes #${wip.issue?.id || '?'}`;
+    const data = await apiRequest('POST', `/repos/${wip.repo}/pulls`, token, { title: wip.pr.title, body, head: headBranch, base: baseBranch });
+    results.push({ type: 'pr', action: 'created', id: data.number, url: data.html_url });
   }
 
   clearWip();
-  return { ok: true, results, message: 'Session executed and cleared: ' + results.map(r => r.type + '=' + r.action).join(', ') };
+  return { ok: true, results, message: 'Pending actions executed and cleared' };
 }
 
-// fix: create local branch only, write to wip.json (no push, no GitHub branch ref)
 async function cmdFix(args) {
   const wip = getWip();
   if (!wip.workdir) throw new Error('No workdir set. Run /gtw on <workdir> first');
   const workdir = wip.workdir;
-  const branchName = args[0] || 'fix/' + Date.now();
+  const branchName = args[0] || `fix/${Date.now()}`;
   const defaultBranch = getDefaultBranch(workdir);
+
+  // Fetch and rebase
   git('git fetch origin', workdir);
-  git('git checkout ' + defaultBranch, workdir);
-  git('git pull --rebase origin ' + defaultBranch, workdir);
-  git('git checkout -b ' + branchName, workdir);
-  const updated = Object.assign({}, wip, { branch: { name: branchName }, updatedAt: new Date().toISOString() });
+  git(`git checkout ${defaultBranch}`, workdir);
+  git(`git pull --rebase origin ${defaultBranch}`, workdir);
+  // Create new branch
+  git(`git checkout -b ${branchName}`, workdir);
+
+  const updated = { ...wip, branch: { name: branchName }, updatedAt: new Date().toISOString() };
   saveWip(updated);
-  return { ok: true, branch: branchName, base: defaultBranch, message: "Branch '" + branchName + "' created locally (rebased on " + defaultBranch + '). Run /gtw confirm to create GitHub branch + PR.' };
+  return { ok: true, branch: branchName, base: defaultBranch, workdir, message: `Switched to new branch '${branchName}' (rebased on ${defaultBranch})` };
 }
 
-// pr: push branch to origin, generate PR draft in wip.json (no PR created yet)
 async function cmdPr(args) {
   const wip = getWip();
   if (!wip.workdir) throw new Error('No workdir set. Run /gtw on <workdir> first');
-  if (!wip.branch || !wip.branch.name) throw new Error('No branch. Run /gtw fix [name] first');
+  if (!wip.branch?.name) throw new Error('No branch. Run /gtw fix [name] first');
+
   const workdir = wip.workdir;
   const branchName = wip.branch.name;
-  git('git push -u origin ' + branchName, workdir);
+  const defaultBranch = getDefaultBranch(workdir);
+
+  // Push branch
+  git(`git push -u origin ${branchName}`, workdir);
+
+  // Get issue body for PR
   let prBody = '';
-  if (wip.issue && wip.issue.id) {
-    try { const issue = await apiRequest('GET', '/repos/' + wip.repo + '/issues/' + wip.issue.id, getToken()); prBody = '## Linked Issue\nCloses #' + wip.issue.id + '\n\n' + (issue.body || '') + '\n\n---\n_Generated by gtw_'; } catch (e) {}
+  if (wip.issue?.id) {
+    try {
+      const token = getToken();
+      const issue = await apiRequest('GET', `/repos/${wip.repo}/issues/${wip.issue.id}`, token);
+      prBody = `## 关联 Issue\nCloses #${wip.issue.id}\n\n${issue.body || ''}\n\n---\n_Generated by github-work skill_`;
+    } catch(e) {}
   }
-  const updated = Object.assign({}, wip, { pr: { title: wip.pr && wip.pr.title ? wip.pr.title : 'Fix #' + (wip.issue ? wip.issue.id + ': ' : '') + branchName, body: prBody }, updatedAt: new Date().toISOString() });
+
+  const updated = { ...wip, pr: { title: wip.pr?.title || `Fix #${wip.issue?.id || ''}: ${branchName}`, body: prBody }, updatedAt: new Date().toISOString() };
   saveWip(updated);
-  return { ok: true, branch: branchName, message: 'Branch pushed. Run /gtw confirm to create PR with ghw/ready label.' };
+  return { ok: true, branch: branchName, message: `Branch pushed. Run /gtw confirm to create PR` };
 }
 
-// push: git add + commit + push (direct execution, no wip)
 async function cmdPush(args) {
   const wip = getWip();
   if (!wip.workdir) throw new Error('No workdir set. Run /gtw on <workdir> first');
   const workdir = wip.workdir;
   const branch = getCurrentBranch(workdir);
+
+  // Get diff for commit message generation
   const diff = git('git diff --cached', workdir) || git('git diff', workdir) || '';
   const stats = git('git diff --stat --cached', workdir) || git('git diff --stat', workdir) || '';
-  const updated = Object.assign({}, wip, { push: { branch, diff, stats } }, { updatedAt: new Date().toISOString() });
+
+  const updated = { ...wip, push: { branch, diff, stats, staged: !!git('git diff --cached', workdir) }, updatedAt: new Date().toISOString() };
   saveWip(updated);
-  return { ok: true, branch, stats, message: 'Changes staged on ' + branch + '. Run /gtw confirm to commit and push.' };
+  return { ok: true, branch, stats, message: `Changes staged. Commit message needed. Use /gtw confirm push` };
 }
 
-// ============================================================
-// STATELESS COMMANDS
-// ============================================================
-
-async function cmdAuth() { return await deviceFlow(); }
-
-async function cmdConfig() {
-  return { ok: true, hasToken: !!(ACCESS_TOKEN || (readJSON(TOKEN_FILE) && readJSON(TOKEN_FILE).access_token)), wip: getWip(), autoRepos: getConfig().repos };
-}
-
-// auto: manage repos in automation pool (label-based review uses this)
-async function cmdAuto(args) {
-  const sub = args[0];
-  const config = getConfig();
-  if (sub === 'add') {
-    const repo = args[1];
-    if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw auto add owner/repo');
-    if (!config.repos.includes(repo)) { config.repos.push(repo); saveConfig(config); try { const token = getToken(); await ensureLabels(token, repo); } catch (e) {} }
-    return { ok: true, repo, message: config.repos.includes(repo) && config.repos.indexOf(repo) < config.repos.length - 1 ? repo + ' is already in the pool' : 'Added ' + repo + ' to automation pool' };
-  }
-  if (sub === 'remove') {
-    const repo = args[1];
-    if (!repo) throw new Error('Usage: /gtw auto remove owner/repo');
-    config.repos = config.repos.filter(r => r !== repo);
-    if (config.lastRepo === repo) config.lastRepo = null;
-    saveConfig(config);
-    return { ok: true, repo, message: 'Removed ' + repo + ' from automation pool' };
-  }
-  if (sub === 'list') return { ok: true, repos: config.repos, lastRepo: config.lastRepo };
-  throw new Error('Usage: /gtw auto add|remove|list');
-}
-
-// review: auto-driven label-based review (stateless)
 async function cmdReview(args) {
   const token = getToken();
-  const config = getConfig();
-  const repos = config.repos;
-  if (!repos.length) throw new Error('No repos in automation pool. Run /gtw auto add owner/repo first');
-  const startIdx = repos.indexOf(config.lastRepo) + 1;
-  const orderedRepos = repos.slice(startIdx).concat(repos.slice(0, startIdx));
-  for (const repo of orderedRepos) {
-    try { await ensureLabels(token, repo); } catch (e) {}
-    const params = new URLSearchParams({ state: 'open', per_page: '30', sort: 'created', direction: 'asc' });
-    const prs = await apiRequest('GET', '/repos/' + repo + '/pulls?' + params, token);
-    let targetPr = null;
-    for (const pr of prs) { if ((pr.labels || []).some(l => l.name && l.name === LABELS.READY)) { targetPr = pr; break; } }
-    if (!targetPr) { for (const pr of prs) { if (!(pr.labels || []).some(l => l.name && l.name.startsWith('ghw/'))) { targetPr = pr; break; } } }
-    if (!targetPr) continue;
-    await setLabel(token, repo, targetPr.number, LABELS.WIP);
-    config.lastRepo = repo;
-    saveConfig(config);
-    let linkedIssue = { title: '', body: '' };
-    const match = targetPr.body && targetPr.body.match(/(?:closes|fixes|cloze)s?\s+#(\d+)/i);
-    if (match) { try { const li = await apiRequest('GET', '/repos/' + repo + '/issues/' + match[1], token); linkedIssue = { title: li.title || '', body: li.body || '' }; } catch (e) {} }
-    const files = await apiRequest('GET', '/repos/' + repo + '/pulls/' + targetPr.number + '/files?per_page=100', token);
-    const filesSummary = files.map(f => '  - ' + f.filename + ': +' + f.additions + ' -' + f.deletions).join('\n');
-    return { ok: true, action: 'claimed', repo, pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url, user: targetPr.user ? targetPr.user.login : '' }, linkedIssue, files: files.map(f => ({ filename: f.filename, additions: f.additions, deletions: f.deletions, patch: f.patch })), verdictNeeded: '/gtw review #' + targetPr.number + ' lgtm   # or revise', message: 'ghw/wip Claimed PR #' + targetPr.number + ': ' + targetPr.title + '\n\nLinked Issue: ' + (linkedIssue.title || 'none') + '\n\nFiles changed (' + files.length + '):\n' + filesSummary + '\n\nReview the diff and issue, then call:\n/gtw review #' + targetPr.number + ' lgtm   # or revise' };
+  const wip = getWip();
+  const repo = wip.repo || (args[0] && args[0].includes('/') ? args[0] : null);
+  if (!repo) throw new Error('No repo set. Run /gtw on <workdir> first, or pass /gtw review owner/repo');
+
+  const myLogin = (await apiRequest('GET', '/user', token)).login;
+
+  // Find earliest unclaimed PR
+  const params = new URLSearchParams({ state: 'open', per_page: '50', sort: 'created', direction: 'asc' });
+  const prs = await apiRequest('GET', `/repos/${repo}/pulls?${params}`, token);
+
+  let targetPr = null;
+  for (const pr of prs) {
+    if (pr.user?.login === myLogin) continue;
+    const comments = await apiRequest('GET', `/repos/${repo}/issues/${pr.number}/comments`, token);
+    const hasClaim = comments.some(c => c.body?.includes('👀'));
+    if (!hasClaim) { targetPr = pr; break; }
   }
-  return { ok: true, message: 'No PRs found in any repo. All caught up!' };
+
+  if (!targetPr) return { ok: true, message: 'No unclaimed PRs found', repo };
+
+  // Claim immediately with 👀
+  const checklist = buildChecklist();
+  const claimComment = await apiRequest('POST', `/repos/${repo}/issues/${targetPr.number}/comments`, token, {
+    body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n---\n${checklist}`,
+  });
+
+  return {
+    ok: true, claimed: true, pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url },
+    comment: claimComment.html_url, repo,
+    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nReview the code, update the checklist [ ] -> [x] in the comment, then run /gtw review d ${targetPr.number}`
+  };
 }
 
-// review verdict: label-only (no GitHub Review API)
-async function cmdReviewVerdict(args) {
+async function cmdReviewDone(args) {
   const token = getToken();
-  const config = getConfig();
+  const wip = getWip();
   const prRef = args[0];
-  const verdict = args[1];
-  let repo, num;
-  const m = String(prRef).match(/^#?(\d+)$/);
-  if (m) {
-    const wip = getWip();
-    repo = wip.repo || config.lastRepo;
-    if (!repo) throw new Error('No repo context. Run /gtw on <workdir> or /gtw review first');
-    num = parseInt(m[1]);
+  const verdict = args[1] || 'approved';
+
+  // Parse PR ref: could be just number, or owner/repo#number
+  let owner, repo, num;
+  if (prRef?.includes('/')) {
+    const m = prRef.match(/([^/]+)\/([^#]+)#?(\d+)/);
+    if (!m) throw new Error(`Invalid PR ref: ${prRef}`);
+    owner = m[1]; repo = m[2]; num = parseInt(m[3]);
   } else {
-    const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
-    if (!full) throw new Error('Usage: /gtw review #<pr> lgtm|revise');
-    repo = full[1]; num = parseInt(full[2]);
+    if (!wip.repo) throw new Error('No repo set. Run /gtw on <workdir> first');
+    num = parseInt(prRef);
+    [owner, repo] = wip.repo.split('/');
   }
-  const newLabel = verdict === 'lgtm' ? LABELS.LGTM : verdict === 'revise' ? LABELS.REVISE : LABELS.REVISE;
-  await setLabel(token, repo, num, newLabel);
-  const emoji = verdict === 'lgtm' ? 'ghw/lgtm' : 'ghw/revise';
-  return { ok: true, verdict, label: newLabel, pr: num, repo, message: emoji + ' Review complete for PR #' + num + ' in ' + repo };
+
+  const myLogin = (await apiRequest('GET', '/user', token)).login;
+  const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
+
+  // Verify claim exists
+  const myClaim = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
+  if (!myClaim) throw new Error('No review claim found. Run /gtw review first');
+
+  // Check all checklist items
+  const items = parseChecklist(comments, myLogin);
+  if (!items.length) throw new Error('No checklist items found in your comments');
+  const unchecked = items.filter(i => !i.checked);
+  if (unchecked.length > 0) {
+    return { ok: false, incomplete: unchecked.map(i => i.text), message: `Items not checked: ${unchecked.map(i => `[ ] ${i.text}`).join(', ')}` };
+  }
+
+  // Delete all my comments
+  const myComments = comments.filter(c => c.user?.login === myLogin);
+  for (const c of myComments) {
+    await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${c.id}`, token).catch(() => {});
+  }
+
+  // Post verdict
+  const emoji = verdict === 'approved' ? '✅' : '❌';
+  const reviewState = verdict === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED';
+  const verdictComment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
+    body: `${emoji} **Review complete** by @${myLogin} — ${verdict === 'approved' ? 'approves' : 'requests changes'}`,
+  });
+  await apiRequest('POST', `/repos/${owner}/${repo}/pulls/${num}/reviews`, token, { body: `${emoji} ${verdict}`, event: reviewState });
+
+  return { ok: true, verdict, pr: num, comment: verdictComment.html_url, message: `${emoji} Review complete for PR #${num}` };
 }
 
-// issue: list open issues in repo
 async function cmdIssue(args) {
   const token = getToken();
   const wip = getWip();
-  const config = getConfig();
-  let repo = args[0];
-  if (!repo && wip.repo) repo = wip.repo;
-  if (!repo && config.lastRepo) repo = config.lastRepo;
-  if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw issue [owner/repo] [--state=open|closed|all]');
-  const state = (args.find(a => a && a.startsWith('--state=')) || '--state=open').split('=')[1];
-  const params = new URLSearchParams({ state, per_page: '50' });
-  const data = await apiRequest('GET', '/repos/' + repo + '/issues?' + params, token);
+  const repo = args[0] && args[0].includes('/') ? args[0] : wip.repo;
+  if (!repo) throw new Error('No repo. Run /gtw on <workdir> first, or pass owner/repo');
+  const params = new URLSearchParams({ state: 'open', per_page: '50' });
+  const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
   const issues = data.filter(i => !i.pull_request);
-  return { ok: true, repo, issues: issues.map(i => ({ number: i.number, title: i.title, state: i.state, url: i.html_url })), display: issues.map(i => '[#' + i.number + '] ' + i.title + ' (' + i.state + ')').join('\n') || 'No issues' };
+  if (!issues.length) return { ok: true, repo, issues: [], message: `No open issues in ${repo}` };
+  return { ok: true, repo, issues: issues.map(i => ({ number: i.number, title: i.title, state: i.state, url: i.html_url })), display: issues.map(i => `[#${i.number}] ${i.title}`).join('\n') };
 }
 
-// show: view issue or PR details
 async function cmdShow(args) {
   const token = getToken();
   const wip = getWip();
-  const config = getConfig();
   const id = parseInt(args[0], 10);
   if (isNaN(id)) throw new Error('Usage: /gtw show #<id>');
-  let repo;
-  const full = String(args[0]).match(/([^/]+\/[^#]+)#?(\d+)/);
-  if (full) { repo = full[1]; }
-  else { repo = wip.repo || config.lastRepo; }
-  if (!repo) throw new Error('No repo context. Run /gtw on <workdir> or /gtw review first');
-  const data = await apiRequest('GET', '/repos/' + repo + '/issues/' + id, token);
-  return { ok: true, issue: { number: data.number, title: data.title, body: data.body, state: data.state, url: data.html_url, labels: (data.labels || []).map(l => l.name) }, display: '[#' + data.number + '] ' + data.title + '\n\n' + (data.body || '') + '\n\nState: ' + data.state + '\nLabels: ' + (data.labels || []).map(l => l.name).join(', ') + '\nURL: ' + data.html_url };
+  const repo = args[1] && args[1].includes('/') ? args[1] : wip.repo;
+  if (!repo) throw new Error('No repo set. Run /gtw on <workdir> first');
+  const data = await apiRequest('GET', `/repos/${repo}/issues/${id}`, token);
+  return { ok: true, issue: { number: data.number, title: data.title, body: data.body, state: data.state, url: data.html_url, assignee: data.assignee?.login }, display: `[#${data.number}] ${data.title}\n\n${data.body || ''}\n\nState: ${data.state}\nURL: ${data.html_url}` };
 }
 
-// ============================================================
-// DISPATCH
-// ============================================================
+async function cmdPoll(args) {
+  const token = getToken();
+  const wip = getWip();
+  const myLogin = (await apiRequest('GET', '/user', token)).login;
+  const repos = wip.repo ? [wip.repo] : [];
+  if (!repos.length) return { ok: true, results: [], message: 'No repos configured' };
 
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const results = { newIssues: [], claimedPRs: [], mergeReady: [] };
+
+  for (const repo of repos) {
+    const issues = await apiRequest('GET', `/repos/${repo}/issues?since=${since}&state=open&per_page=20`, token);
+    issues.filter(i => !i.pull_request).forEach(i => results.newIssues.push({ ...i, repo }));
+    const prs = await apiRequest('GET', `/repos/${repo}/pulls?state=open&per_page=30`, token);
+    for (const pr of prs) {
+      if (pr.user?.login === myLogin) continue;
+      const reviews = await apiRequest('GET', `/repos/${repo}/pulls/${pr.number}/reviews`, token);
+      const comments = await apiRequest('GET', `/repos/${repo}/issues/${pr.number}/comments`, token);
+      const approvals = reviews.filter(r => r.state === 'APPROVED').length;
+      const hasClaim = comments.some(c => c.body?.includes('👀') && c.user?.login !== myLogin);
+      if (!hasClaim) results.claimedPRs.push({ number: pr.number, title: pr.title, url: pr.html_url, by: pr.user?.login, repo });
+    }
+  }
+
+  let display = '';
+  if (results.newIssues.length) { display += '\n🆕 New Issues:\n'; results.newIssues.forEach(i => { display += `  [#${i.number}] ${i.title} [${i.repo}]\n`; }); }
+  if (results.claimedPRs.length) { display += '\n👀 Unclaimed PRs:\n'; results.claimedPRs.forEach(pr => { display += `  [#${pr.number}] ${pr.title} by @${pr.by} [${pr.repo}]\n`; }); }
+  if (results.mergeReady.length) { display += '\n✅ Merge Ready:\n'; results.mergeReady.forEach(pr => { display += `  [#${pr.number}] ${pr.title} [${pr.repo}]\n`; }); }
+  if (!results.newIssues.length && !results.claimedPRs.length && !results.mergeReady.length) display += '\nNothing new.\n';
+  return { ok: true, ...results, display };
+}
+
+async function cmdConfig(args) {
+  return {
+    ok: true,
+    repos: getConfig().repos,
+    workDir: process.cwd(),
+    hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
+    wip: readJSON(wip_FILE) || null,
+  };
+}
+
+async function cmdPending(args) {
+  const sub = args[0];
+  if (sub === 'get') return { ok: true, wip: getWip() };
+  if (sub === 'clear') { clearWip(); return { ok: true, message: 'Pending cleared' }; }
+  // /gtw wip set --issue-title=X --issue-body=Y ...
+  const opts = parseArgs(args.slice(1));
+  const p = { ...getWip() };
+  if (opts['issue-title']) {
+    p.issue = { action: 'update', id: opts['issue-id'] ? parseInt(opts['issue-id']) : null, title: opts['issue-title'], body: opts['issue-body'] || '' };
+  }
+  if (opts['branch-name']) p.branch = { name: opts['branch-name'] };
+  if (opts['pr-title']) p.pr = { title: opts['pr-title'], body: opts['pr-body'] || '' };
+  if (opts['repo']) p.repo = opts['repo'];
+  if (opts['workdir']) p.workdir = opts['workdir'];
+  p.updatedAt = new Date().toISOString();
+  saveWip(p);
+  return { ok: true, wip: p };
+}
+
+
+// --- Utils ---
+function parseArgs(args) {
+  const opts = {};
+  for (const arg of args) {
+    const m = arg.match(/^--([a-zA-Z0-9-]+)(?:=(.+))?$/);
+    if (m) { opts[m[1]] = m[2] !== undefined ? m[2] : true; }
+    else { if (!opts._) opts._ = []; opts._.push(arg); }
+  }
+  return opts;
+}
+
+// --- Dispatch ---
 async function main() {
   const input = process.argv[2] || '';
   const parts = input.trim().split(/\s+/).filter(Boolean);
@@ -387,27 +492,25 @@ async function main() {
   let result;
   try {
     switch (cmd) {
-      case 'auth':    result = await cmdAuth(); break;
-      case 'on':      result = await cmdOn(args); break;
-      case 'new':     result = await cmdNew(args); break;
-      case 'update':  result = await cmdUpdate(args); break;
+      case 'auth': result = await cmdAuth(); break;
+      case 'on': result = await cmdOn(args); break;
+      case 'new': result = await cmdNew(args); break;
+      case 'update': result = await cmdUpdate(args); break;
       case 'confirm': result = await cmdConfirm(args); break;
-      case 'fix':     result = await cmdFix(args); break;
-      case 'pr':      result = await cmdPr(args); break;
-      case 'push':    result = await cmdPush(args); break;
-      case 'config':  result = await cmdConfig(); break;
-      case 'auto':    result = await cmdAuto(args); break;
+      case 'fix': result = await cmdFix(args); break;
+      case 'pr': result = await cmdPr(args); break;
+      case 'push': result = await cmdPush(args); break;
       case 'review':
-        if (args[0] && (args[0].startsWith('#') || args[0].match(/^\d+$/) || String(args[0]).includes('/'))) {
-          result = await cmdReviewVerdict(args);
-        } else {
-          result = await cmdReview(args);
-        }
+        if (args[0] === 'd' || args[0] === 'done') result = await cmdReviewDone(args.slice(1));
+        else result = await cmdReview(args);
         break;
-      case 'issue':   result = await cmdIssue(args); break;
-      case 'show':    result = await cmdShow(args); break;
+      case 'issue': result = await cmdIssue(args); break;
+      case 'show': result = await cmdShow(args); break;
+      case 'poll': result = await cmdPoll(args); break;
+      case 'config': result = await cmdConfig(args); break;
+      case 'pending': result = await cmdPending(args); break;
       default:
-        throw new Error('Unknown: ' + cmd + '. Use: on, new, update, confirm, fix, pr, push, config, auto, review, issue, show');
+        throw new Error(`Unknown: ${cmd}. Use: start, new, update, confirm, fix, pr, push, review, issue, show, poll, config`);
     }
     console.log(JSON.stringify(result, null, 2));
   } catch (err) {
