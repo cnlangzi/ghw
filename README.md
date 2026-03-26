@@ -172,38 +172,22 @@ Result is written to `wip.json` as the pending branch.
 ```bash
 /ghw review
 ```
-From `wip.json`'s repo, finds the earliest unclaimed open PR and immediately:
-1. Posts a eyes claim comment (prevents other reviewers from picking it up)
-2. Attaches a review checklist
-3. Returns the PR for manual review
+From `wip.json`'s repo, finds the earliest unclaimed open PR and:
+1. Claims it with eyes (prevents other reviewers from picking it up)
+2. Posts a review checklist to the PR
+3. Returns PR title, URL, files changed summary, and checklist items
 
-**Review Checklist** (written to the PR comment):
-```
-## Review Checklist
-
-Check each item. Mark [x] when verified:
-
-  - [ ] Does the implementation match the Issue requirements?
-  - [ ] Are there any out-of-scope changes?
-  - [ ] Are there any missing pieces?
-
----
-_Run /ghw review d after all items are [x]_
-```
-
-During review, manually update `[ ]` -> `[x]` in the comment as you verify each item.
+Agent then reviews the PR diff against the checklist, then calls:
 
 ```bash
-/ghw review d <pr-ref> [approved|changes]
+/ghw review d #<pr> [approved|changes]
 ```
-Completes the review:
-- If not all checklist items are `[x]` -> error listing unchecked items
-- If all checked -> deletes the claim comment, posts approved/changes verdict, submits the GitHub Official Review
+Posts the verdict (eyes/approved/changes), deletes the claim comment, and submits the GitHub Official Review.
 
 ```bash
 # Examples
 /ghw review d #45 approved       # Approves PR #45
-/ghw review d owner/repo#78 changes  # Requests changes on PR #78 in owner/repo
+/ghw review d #78 changes        # Requests changes on PR #78
 ```
 
 ---
@@ -255,7 +239,8 @@ Agent: Issue #45 created
 # --- Later, another developer picks up the PR review ---
 You: /ghw review
 Agent: eyes Claimed PR #78: Add OAuth login support
-       Review the code, check the [ ] items, then /ghw review d #78
+       Files changed: 3 (+120 -45)
+       Agent reviews the diff, then calls: /ghw review d #78 approved
 ```
 
 ---

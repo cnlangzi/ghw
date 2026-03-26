@@ -95,27 +95,18 @@ Result written to wip.json.branch.
 ```
 /ghw review
 ```
-From wip.json's repo, finds the earliest unclaimed open PR and immediately:
-1. Posts a 👀 claim comment (prevents other reviewers from picking it up)
-2. Attaches a review checklist
+From wip.json's repo, finds the earliest unclaimed open PR and:
+1. Claims it with eyes (prevents other reviewers)
+2. Posts a review checklist to the PR
+3. Returns PR title, URL, files changed summary, and checklist
 
-**Review Checklist** (written to the PR comment):
+Agent then reviews the PR diff and calls:
 ```
-## Review Checklist
-- [ ] Does the implementation match the Issue requirements?
-- [ ] Are there any out-of-scope changes?
-- [ ] Are there any missing pieces?
+/ghw review d #<pr> [approved|changes]
 ```
-During review, manually update `[ ]` -> `[x]` as you verify each item.
+Posts the verdict, deletes the claim comment, submits the GitHub Official Review.
 
-```
-/ghw review d <pr-ref> [approved|changes]
-```
-Completes the review:
-- If not all items are `[x]` -> error listing unchecked items
-- If all checked -> deletes claim comment, posts ✅/❌ verdict, submits GitHub Official Review
 
----
 
 ### Information
 

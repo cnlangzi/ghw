@@ -296,8 +296,11 @@ async function cmdPush(args) {
 async function cmdReview(args) {
   const token = getToken();
   const wip = getWip();
-  const repo = wip.repo || (args[0] && args[0].includes('/') ? args[0] : null);
-  if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first, or pass /ghw review owner/repo');
+  // args: [repo], or verdict (approved/changes) comes from the LLM agent after it reviews the PR
+  const verdict = args.find(a => a === 'approved' || a === 'changes') || 'approved';
+  const repo = wip.repo || (args.find(a => a?.includes('/')) || '');
+
+  if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first');
 
   const myLogin = (await apiRequest('GET', '/user', token)).login;
 
@@ -315,16 +318,26 @@ async function cmdReview(args) {
 
   if (!targetPr) return { ok: true, message: 'No unclaimed PRs found', repo };
 
-  // Claim immediately with 👀
-  const checklist = buildChecklist();
+  // Get PR diff for agent review
+  const prDiff = await apiRequest('GET', `/repos/${repo}/pulls/${targetPr.number}`, token);
+  const files = await apiRequest('GET', `/repos/${repo}/pulls/${targetPr.number}/files?per_page=100`, token);
+  const filesSummary = files.map(f => `  - ${f.filename}: +${f.additions} -${f.deletions}`).join('\n');
+  const changesSummary = `Files changed (${files.length}):\n${filesSummary}`;
+
+  // Post claim comment
+  const checklist = REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n');
   const claimComment = await apiRequest('POST', `/repos/${repo}/issues/${targetPr.number}/comments`, token, {
-    body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n---\n${checklist}`,
+    body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n## Review Checklist\n\n${checklist}\n\n---\n_Run /ghw review d #${targetPr.number} approved|changes after review_`,
   });
 
   return {
-    ok: true, claimed: true, pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url },
-    comment: claimComment.html_url, repo,
-    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nReview the code, update the checklist [ ] -> [x] in the comment, then run /ghw review d ${targetPr.number}`
+    ok: true, claimed: true,
+    pr: { number: targetPr.number, title: targetPr.title, url: targetPr.html_url, user: targetPr.user?.login, state: targetPr.state },
+    repo,
+    changes: changesSummary,
+    checklist: REVIEW_ITEMS,
+    comment: claimComment.html_url,
+    message: `👀 Claimed PR #${targetPr.number}: ${targetPr.title}\n\nAgent should review the PR and its diff, then call:\n/ghw review d #${targetPr.number} approved   # or changes\n\nChecklist:\n${checklist}`,
   };
 }
 
@@ -347,24 +360,16 @@ async function cmdReviewDone(args) {
   }
 
   const myLogin = (await apiRequest('GET', '/user', token)).login;
+
+  // Claim if not already claimed
   const comments = await apiRequest('GET', `/repos/${owner}/${repo}/issues/${num}/comments`, token);
-
-  // Verify claim exists
-  const myClaim = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
-  if (!myClaim) throw new Error('No review claim found. Run /ghw review first');
-
-  // Check all checklist items
-  const items = parseChecklist(comments, myLogin);
-  if (!items.length) throw new Error('No checklist items found in your comments');
-  const unchecked = items.filter(i => !i.checked);
-  if (unchecked.length > 0) {
-    return { ok: false, incomplete: unchecked.map(i => i.text), message: `Items not checked: ${unchecked.map(i => `[ ] ${i.text}`).join(', ')}` };
-  }
-
-  // Delete all my comments
-  const myComments = comments.filter(c => c.user?.login === myLogin);
-  for (const c of myComments) {
-    await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${c.id}`, token).catch(() => {});
+  let claimComment;
+  const existingClaim = comments.find(c => c.user?.login === myLogin && c.body?.includes('👀'));
+  if (!existingClaim) {
+    const checklist = REVIEW_ITEMS.map(i => `  - [ ] ${i}`).join('\n');
+    claimComment = await apiRequest('POST', `/repos/${owner}/${repo}/issues/${num}/comments`, token, {
+      body: `👀 **Review claimed** by @${myLogin}\n\n_Emoji: 👀 = in progress, ✅ = done, ❌ = needs changes_\n\n## Review Checklist\n\n${checklist}\n\n---\n_Run /ghw review d #${num} approved|changes after review_`,
+    });
   }
 
   // Post verdict
@@ -374,6 +379,11 @@ async function cmdReviewDone(args) {
     body: `${emoji} **Review complete** by @${myLogin} — ${verdict === 'approved' ? 'approves' : 'requests changes'}`,
   });
   await apiRequest('POST', `/repos/${owner}/${repo}/pulls/${num}/reviews`, token, { body: `${emoji} ${verdict}`, event: reviewState });
+
+  // Delete claim comment if we created one
+  if (existingClaim) {
+    await apiRequest('DELETE', `/repos/${owner}/${repo}/issues/comments/${existingClaim.id}`, token).catch(() => {});
+  }
 
   return { ok: true, verdict, pr: num, comment: verdictComment.html_url, message: `${emoji} Review complete for PR #${num}` };
 }
