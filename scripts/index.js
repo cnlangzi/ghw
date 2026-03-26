@@ -19,7 +19,7 @@ const os = require('os');
 const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'gtw');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
-const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
+const wip_FILE = path.join(CONFIG_DIR, 'wip.json');
 
 // Ensure config dir
 [CONFIG_DIR].forEach(d => { if (!fs.existsSync(d)) { fs.mkdirSync(d, { recursive: true }); fs.chmodSync(d, '0700'); } });
@@ -69,6 +69,9 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // --- File helpers ---
 function readJSON(file) { try { return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null; } catch (e) { return null; } }
 function writeJSON(file, data) { fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8'); fs.chmodSync(file, '0600'); }
+function getWip() { return readJSON(wip_FILE) || {}; }
+function saveWip(p) { writeJSON(wip_FILE, p); }
+function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
 
 // --- Token ---
 function getToken() {
@@ -298,10 +301,11 @@ async function cmdReviewVerdict(args) {
   let repo, num;
   const m = String(prRef).match(/^#?(\d+)$/);
   if (m) {
-    // Need repo from auto-repos
+    // Need repo from session or review context
+    const wip = getWip();
     const config = getConfig();
-    if (!config.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
-    repo = config.lastRepo;
+    repo = wip.repo || config.lastRepo;
+    if (!repo) throw new Error('No repo context. Run /gtw on <workdir> or /gtw review first');
     num = parseInt(m[1]);
   } else {
     const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
@@ -419,26 +423,55 @@ async function cmdUpdate(args) {
 async function cmdConfirm(args) {
   let workdir = args[0];
   const wip = getWip();
+  if (!wip || (!wip.workdir && !workdir)) throw new Error('No session. Run /gtw on <workdir> first');
   if (!workdir && wip.workdir) workdir = wip.workdir;
-  else if (!workdir) throw new Error('Usage: /gtw confirm <workdir> [commit-msg]');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
   if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
 
-  const commitMsg = args.slice(1).join(' ') || 'Update';
-  git(`git add -A`, absWorkdir);
-  try { git(`git commit -m "${commitMsg.replace(/"/g, '\\"')}"`, absWorkdir); } catch (e) { throw new Error('No changes to commit'); }
-  git(`git push`, absWorkdir);
-  const branch = getCurrentBranch(absWorkdir);
+  const results = [];
+  const repo = wip.repo || getRemoteRepo(absWorkdir);
 
-  return { ok: true, branch, workdir: absWorkdir, message: `Pushed ${branch}: "${commitMsg}"` };
+  // Execute pending issue action
+  if (wip.issue && wip.issue.title) {
+    const token = getToken();
+    const { action, id, title, body } = wip.issue;
+    if (action === 'create') {
+      const data = await apiRequest('POST', '/repos/' + repo + '/issues', token, { title, body: body || 'Created via gtw' });
+      results.push({ type: 'issue', action: 'created', id: data.number, url: data.html_url });
+    } else if (action === 'update' && id) {
+      const data = await apiRequest('PATCH', '/repos/' + repo + '/issues/' + id, token, { title, body });
+      results.push({ type: 'issue', action: 'updated', id, url: data.html_url });
+    }
+  }
+
+  // Git operations
+  const commitMsg = args.slice(1).join(' ') || 'Update';
+  git('git add -A', absWorkdir);
+  let branch;
+  try {
+    branch = getCurrentBranch(absWorkdir);
+    git('git commit -m "' + commitMsg.replace(/"/g, '\\"') + '"', absWorkdir);
+    git('git push', absWorkdir);
+    results.push({ type: 'git', action: 'pushed', branch, message: commitMsg });
+  } catch (e) {
+    // No changes to commit - still ok if we created an issue
+    branch = getCurrentBranch(absWorkdir);
+  }
+
+  // Clear wip after execution
+  clearWip();
+
+  return { ok: true, results, message: 'Session executed and cleared: ' + results.map(r => r.type + '=' + r.action).join(', ') };
 }
 
 // issue: list open issues
 async function cmdIssue(args) {
   const token = getToken();
-  const repo = args[0];
-  if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw issue owner/repo [--state=open|closed|all]');
+  const wip = getWip();
+  let repo = args[0];
+  if (!repo && wip.repo) repo = wip.repo;
+  if (!repo || !repo.includes('/')) throw new Error('Usage: /gtw issue [owner/repo] [--state=open|closed|all]');
   const state = args.find(a => a?.startsWith('--state='))?.split('=')[1] || 'open';
   const params = new URLSearchParams({ state, per_page: '50', direction: 'desc' });
   const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
@@ -452,11 +485,12 @@ async function cmdShow(args) {
   const prRef = args[0]; // "#45" or "45" or "owner/repo#45"
   let repo, num;
   const full = String(prRef).match(/([^/]+\/[^#]+)#?(\d+)/);
+  const wip = getWip();
   if (full) { repo = full[1]; num = parseInt(full[2]); }
   else {
     const config = getConfig();
-    if (!config.lastRepo) throw new Error('No repo context. Run /gtw review first to pick a repo');
-    repo = config.lastRepo;
+    repo = wip.repo || config.lastRepo;
+    if (!repo) throw new Error('No repo context. Run /gtw on <workdir> or /gtw review first');
     num = parseInt(String(prRef).replace('#', ''));
   }
   const data = await apiRequest('GET', `/repos/${repo}/issues/${num}`, token);
