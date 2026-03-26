@@ -1,5 +1,5 @@
 ---
-name: github-work
+name: ghw
 description: GitHub team workflow skill. Multi-repo support. Manage issues, branches, PRs, and team review via GitHub API.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
