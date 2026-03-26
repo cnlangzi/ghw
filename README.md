@@ -45,7 +45,7 @@ All `ghw/*` labels are mutually exclusive - only one can exist on a PR at a time
 |-------|---------|-------------|
 | `ghw/ready` | Waiting for review | Developer (`/ghw pr`) |
 | `ghw/wip` | Review in progress | Agent (`/ghw review`) |
-| `ghw/lgtm` | Approved | Agent (`/ghw review #<pr> approved`) |
+| `ghw/lgtm` | Approved | Agent (`/ghw review #<pr> lgtm`) |
 | `ghw/revise` | Changes requested | Agent (`/ghw review #<pr> revise`) |
 
 ## Quick Start
@@ -78,7 +78,7 @@ git checkout -b fix/123
 # -> Claims ghw/ready PR, sets ghw/wip, returns diff
 
 # After reviewing the diff and linked issue:
-/ghw review #45 approved   # -> ghw/lgtm
+/ghw review #45 lgtm   # -> ghw/lgtm
 /ghw review #45 revise     # -> ghw/revise
 ```
 
@@ -96,7 +96,7 @@ git checkout -b fix/123
 
 ```
 /ghw review                     Pick repo + PR, claim (ghw/wip), return diff
-/ghw review #<pr> approved     Approve: ghw/wip -> ghw/lgtm
+/ghw review #<pr> lgtm     Approve: ghw/wip -> ghw/lgtm
 /ghw review #<pr> revise       Request changes: ghw/wip -> ghw/revise
 ```
 

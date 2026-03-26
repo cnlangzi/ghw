@@ -45,6 +45,25 @@ Only one `ghw/*` label can exist on a PR at a time.
 
 ## Commands
 
+### Session Context
+
+All git operations share the same workdir/repo context once set.
+
+```
+/ghw on <workdir>
+    Set workdir and repo in session context (wip.json).
+
+/ghw new [title] [body]
+    Create an issue draft in session context.
+
+/ghw update #<id> [title]
+    Update an existing issue draft in session context.
+
+/ghw confirm
+    Execute all pending actions (create/update issue, create PR, etc.)
+    stored in session context, then clear.
+```
+
 ### Automation Pool
 
 ```
@@ -68,8 +87,8 @@ Only one `ghw/*` label can exist on a PR at a time.
 
 /ghw review #<pr> lgtm|revise
     Submit review verdict on the PR:
-    - approved  -> ghw/wip -> ghw/lgtm, submit APPROVED review
-    - revise    -> ghw/wip -> ghw/revise, submit CHANGES_REQUESTED review
+    - lgtm   -> ghw/wip -> ghw/lgtm
+    - revise -> ghw/wip -> ghw/revise
 ```
 
 Review flow:
@@ -82,17 +101,17 @@ Review flow:
 ### Git Operations
 
 ```
-/ghw fix <workdir> [branch-name]
-    Fetch/rebase main, create new branch. Returns branch name.
+/ghw fix [branch-name]
+    Fetch/rebase main, create new branch. Uses session workdir from /ghw on.
 
-/ghw pr <workdir> [title]
+/ghw pr [title]
     Push branch, create PR with ghw/ready label, link to issue if branch
     name contains issue number (e.g. fix/123).
 
-/ghw push <workdir>
-    git add -A, show diff summary. Use /ghw confirm to commit and push.
+/ghw push
+    git add -A, show diff summary. Uses session workdir from /ghw on.
 
-/ghw confirm <workdir> [commit-msg]
+/ghw confirm [commit-msg]
     Commit staged changes and push.
 ```
 

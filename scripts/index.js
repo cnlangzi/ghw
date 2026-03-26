@@ -155,6 +155,18 @@ async function setLabel(token, repo, prNumber, newLabel) {
 
 // --- Commands ---
 
+async function cmdOn(args) {
+  const workdir = args[0];
+  if (!workdir) throw new Error('Usage: /ghw on <workdir>');
+  const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
+  const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
+  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
+  const repo = getRemoteRepo(absWorkdir);
+  const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
+  saveWip(wip);
+  return { ok: true, workdir: absWorkdir, repo, message: 'Workdir set to ' + absWorkdir + ', repo: ' + repo };
+}
+
 async function cmdAuth() {
   return await deviceFlow();
 }
@@ -305,11 +317,13 @@ async function cmdReviewVerdict(args) {
 
 // fix: create a new branch based on main
 async function cmdFix(args) {
-  const workdir = args[0];
-  if (!workdir) throw new Error('Usage: /ghw fix <workdir>');
+  let workdir = args[0];
+  const wip = getWip();
+  if (!workdir && wip.workdir) workdir = wip.workdir;
+  else if (!workdir) throw new Error('Usage: /ghw fix <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
-  if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
+  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
 
   const repo = getRemoteRepo(absWorkdir);
   const branchName = args[1] || `fix/${Date.now()}`;
@@ -324,13 +338,15 @@ async function cmdFix(args) {
 
 // pr: create PR and add ghw/ready label
 async function cmdPr(args) {
-  const workdir = args[0];
-  if (!workdir) throw new Error('Usage: /ghw pr <workdir>');
+  let workdir = args[0];
+  const wip = getWip();
+  if (!workdir && wip.workdir) workdir = wip.workdir;
+  else if (!workdir) throw new Error('Usage: /ghw pr <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
-  if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
+  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
 
-  const repo = getRemoteRepo(absWorkdir);
+  const repo = wip.repo || getRemoteRepo(absWorkdir);
   const token = getToken();
   const [owner, repoName] = repo.split('/');
 
@@ -363,11 +379,13 @@ async function cmdPr(args) {
 
 // push: stage, show diff, require confirm
 async function cmdPush(args) {
-  const workdir = args[0];
-  if (!workdir) throw new Error('Usage: /ghw push <workdir>');
+  let workdir = args[0];
+  const wip = getWip();
+  if (!workdir && wip.workdir) workdir = wip.workdir;
+  else if (!workdir) throw new Error('Usage: /ghw push <workdir>');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
-  if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
+  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
 
   const branch = getCurrentBranch(absWorkdir);
   const diff = git('git diff --cached', absWorkdir) || git('git diff', absWorkdir) || '';
@@ -377,12 +395,35 @@ async function cmdPush(args) {
 }
 
 // confirm push: commit and push
+async function cmdNew(args) {
+  const wip = getWip();
+  if (!wip.repo) throw new Error('No repo set. Run /ghw on <workdir> first');
+  const title = args[0] || '';
+  const body = args.slice(1).join(' ') || '';
+  const updated = Object.assign({}, wip, { issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() });
+  saveWip(updated);
+  return { ok: true, wip: updated, message: title ? 'Issue draft saved: ' + title : 'Issue draft saved (title/body will be filled by agent)' };
+}
+
+async function cmdUpdate(args) {
+  const id = parseInt(args[0], 10);
+  if (isNaN(id)) throw new Error('Usage: /ghw update #<id> [title]');
+  const wip = getWip();
+  if (!wip.repo) throw new Error('No repo set. Run /ghw on <workdir> first');
+  const rest = args.slice(1).join(' ');
+  const updated = Object.assign({}, wip, { issue: { action: 'update', id, title: rest, body: '' }, updatedAt: new Date().toISOString() });
+  saveWip(updated);
+  return { ok: true, wip: updated, message: 'Issue #' + id + ' update draft saved' };
+}
+
 async function cmdConfirm(args) {
-  const workdir = args[0];
-  if (!workdir) throw new Error('Usage: /ghw confirm <workdir> [commit-msg]');
+  let workdir = args[0];
+  const wip = getWip();
+  if (!workdir && wip.workdir) workdir = wip.workdir;
+  else if (!workdir) throw new Error('Usage: /ghw confirm <workdir> [commit-msg]');
   const expandedWorkdir = workdir.startsWith('~') ? path.join(os.homedir(), workdir.slice(1)) : workdir;
   const absWorkdir = path.isAbsolute(expandedWorkdir) ? expandedWorkdir : path.join(process.cwd(), expandedWorkdir);
-  if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
+  if (!fs.existsSync(absWorkdir)) throw new Error('Directory not found: ' + absWorkdir);
 
   const commitMsg = args.slice(1).join(' ') || 'Update';
   git(`git add -A`, absWorkdir);
@@ -432,6 +473,9 @@ async function main() {
   try {
     switch (cmd) {
       case 'auth':   result = await cmdAuth(); break;
+      case 'on':     result = await cmdOn(args); break;
+      case 'new':    result = await cmdNew(args); break;
+      case 'update': result = await cmdUpdate(args); break;
       case 'config': result = await cmdConfig(); break;
       case 'auto':   result = await cmdAuto(args); break;
       case 'review':
