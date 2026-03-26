@@ -127,7 +127,7 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 
 ## Pending 状态
 
-文件：`~/.openclaw/github-work/pending.json`
+文件：`~/.openclaw/github-work/wip.json`
 
 ```json
 {
@@ -197,5 +197,5 @@ LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
 - **Token**：PAT 或 OAuth Device Flow
 - **Git 操作**：直接调用本地 git
 - **GitHub API**：REST API v3
-- **存储**：`~/.openclaw/github-work/pending.json`（0600）
+- **存储**：`~/.openclaw/github-work/wip.json`（0600）
 - **零外部依赖**

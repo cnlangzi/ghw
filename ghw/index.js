@@ -12,7 +12,7 @@ const os = require('os');
 
 const CONFIG_DIR = path.join(os.homedir(), '.openclaw', 'github-work');
 const TOKEN_FILE = path.join(CONFIG_DIR, 'token.json');
-const PENDING_FILE = path.join(CONFIG_DIR, 'pending.json');
+const wip_FILE = path.join(CONFIG_DIR, 'wip.json');
 const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 
 // Ensure config dir
@@ -98,9 +98,9 @@ function postForm(urlStr, data) {
 }
 
 // --- Pending state ---
-function getPending() { const p = readJSON(PENDING_FILE); return p || {}; }
-function savePending(p) { writeJSON(PENDING_FILE, p); }
-function clearPending() { if (fs.existsSync(PENDING_FILE)) fs.unlinkSync(PENDING_FILE); }
+function getWip() { const p = readJSON(wip_FILE); return p || {}; }
+function saveWip(p) { writeJSON(wip_FILE, p); }
+function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
 
 // --- Git helpers ---
 function git(cmd, cwd) {
@@ -156,83 +156,83 @@ async function cmdStart(args) {
   const absWorkdir = path.isAbsolute(workdir) ? workdir : path.join(WORK_DIR, workdir);
   if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
   const repo = getRemoteRepo(absWorkdir);
-  const pending = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
-  savePending(pending);
+  const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
+  saveWip(wip);
   return { ok: true, workdir: absWorkdir, repo, message: `Workdir set to ${absWorkdir}, repo: ${repo}` };
 }
 
 async function cmdNew(args) {
   // args: [title, body] or empty (agent will fill)
-  const pending = getPending();
-  if (!pending.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
+  const wip = getWip();
+  if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
   const title = args[0] || '';
   const body = args.slice(1).join(' ') || '';
-  const updated = { ...pending, issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() };
-  savePending(updated);
-  return { ok: true, pending: updated, message: title ? `Issue draft saved: "${title}"` : 'Issue draft saved (title/body will be filled by agent)' };
+  const updated = { ...wip, issue: { action: 'create', id: null, title, body }, updatedAt: new Date().toISOString() };
+  saveWip(updated);
+  return { ok: true, wip: updated, message: title ? `Issue draft saved: "${title}"` : 'Issue draft saved (title/body will be filled by agent)' };
 }
 
 async function cmdUpdate(args) {
   // args: [#id, title, body]
   const id = parseInt(args[0], 10);
   if (isNaN(id)) throw new Error('Usage: /ghw update #<id> [title] [body...]');
-  const pending = getPending();
-  if (!pending.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
+  const wip = getWip();
+  if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
   const title = args.slice(1).filter((_,i) => i % 2 === 0).join(' ') || '';
   const body = args.slice(2).filter((_,i) => i % 2 === 1).join(' ') || '';
-  const updated = { ...pending, issue: { action: 'update', id, title, body }, updatedAt: new Date().toISOString() };
-  savePending(updated);
-  return { ok: true, pending: updated, message: `Issue #${id} update draft saved` };
+  const updated = { ...wip, issue: { action: 'update', id, title, body }, updatedAt: new Date().toISOString() };
+  saveWip(updated);
+  return { ok: true, wip: updated, message: `Issue #${id} update draft saved` };
 }
 
 async function cmdConfirm(args) {
   const token = getToken();
-  const pending = getPending();
-  if (!pending.repo) throw new Error('No pending action. Run /ghw start + /ghw new first');
+  const wip = getWip();
+  if (!wip.repo) throw new Error('No wip action. Run /ghw start + /ghw new first');
   const results = [];
 
   // Issue
-  if (pending.issue?.title) {
-    const { action, id, title, body } = pending.issue;
+  if (wip.issue?.title) {
+    const { action, id, title, body } = wip.issue;
     if (action === 'create') {
-      const data = await apiRequest('POST', `/repos/${pending.repo}/issues`, token, { title, body: body || `Created via github-work skill` });
+      const data = await apiRequest('POST', `/repos/${wip.repo}/issues`, token, { title, body: body || `Created via github-work skill` });
       results.push({ type: 'issue', action: 'created', id: data.number, url: data.html_url });
     } else if (action === 'update' && id) {
-      const data = await apiRequest('PATCH', `/repos/${pending.repo}/issues/${id}`, token, { title, body });
+      const data = await apiRequest('PATCH', `/repos/${wip.repo}/issues/${id}`, token, { title, body });
       results.push({ type: 'issue', action: 'updated', id, url: data.html_url });
     }
   }
 
   // Branch
-  if (pending.branch?.name && pending.issue?.id) {
-    const issueNum = pending.issue.id;
-    const branchName = pending.branch.name;
-    const workdir = pending.workdir || WORK_DIR;
-    const [owner, repoName] = pending.repo.split('/');
-    const shaResp = await apiRequest('GET', `/repos/${pending.repo}/git/ref/heads/${getDefaultBranch(workdir)}`, token);
-    await apiRequest('POST', `/repos/${pending.repo}/git/refs`, token, { ref: `refs/heads/${branchName}`, sha: shaResp.object.sha });
+  if (wip.branch?.name && wip.issue?.id) {
+    const issueNum = wip.issue.id;
+    const branchName = wip.branch.name;
+    const workdir = wip.workdir || WORK_DIR;
+    const [owner, repoName] = wip.repo.split('/');
+    const shaResp = await apiRequest('GET', `/repos/${wip.repo}/git/ref/heads/${getDefaultBranch(workdir)}`, token);
+    await apiRequest('POST', `/repos/${wip.repo}/git/refs`, token, { ref: `refs/heads/${branchName}`, sha: shaResp.object.sha });
     try { await apiRequest('POST', `/repos/${owner}/${repoName}/issues/${issueNum}/labels`, token, { labels: [`branch:${branchName}`] }); } catch(e) {}
     results.push({ type: 'branch', action: 'created', name: branchName });
   }
 
   // PR
-  if (pending.pr?.title) {
-    const workdir = pending.workdir || WORK_DIR;
+  if (wip.pr?.title) {
+    const workdir = wip.workdir || WORK_DIR;
     const baseBranch = getDefaultBranch(workdir);
-    const headBranch = pending.branch?.name || getCurrentBranch(workdir);
-    const body = pending.pr.body || `Closes #${pending.issue?.id || '?'}`;
-    const data = await apiRequest('POST', `/repos/${pending.repo}/pulls`, token, { title: pending.pr.title, body, head: headBranch, base: baseBranch });
+    const headBranch = wip.branch?.name || getCurrentBranch(workdir);
+    const body = wip.pr.body || `Closes #${wip.issue?.id || '?'}`;
+    const data = await apiRequest('POST', `/repos/${wip.repo}/pulls`, token, { title: wip.pr.title, body, head: headBranch, base: baseBranch });
     results.push({ type: 'pr', action: 'created', id: data.number, url: data.html_url });
   }
 
-  clearPending();
+  clearWip();
   return { ok: true, results, message: 'Pending actions executed and cleared' };
 }
 
 async function cmdFix(args) {
-  const pending = getPending();
-  if (!pending.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
-  const workdir = pending.workdir;
+  const wip = getWip();
+  if (!wip.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
+  const workdir = wip.workdir;
   const branchName = args[0] || `fix/${Date.now()}`;
   const defaultBranch = getDefaultBranch(workdir);
 
@@ -243,18 +243,18 @@ async function cmdFix(args) {
   // Create new branch
   git(`git checkout -b ${branchName}`, workdir);
 
-  const updated = { ...pending, branch: { name: branchName }, updatedAt: new Date().toISOString() };
-  savePending(updated);
+  const updated = { ...wip, branch: { name: branchName }, updatedAt: new Date().toISOString() };
+  saveWip(updated);
   return { ok: true, branch: branchName, base: defaultBranch, workdir, message: `Switched to new branch '${branchName}' (rebased on ${defaultBranch})` };
 }
 
 async function cmdPr(args) {
-  const pending = getPending();
-  if (!pending.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
-  if (!pending.branch?.name) throw new Error('No branch. Run /ghw fix [name] first');
+  const wip = getWip();
+  if (!wip.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
+  if (!wip.branch?.name) throw new Error('No branch. Run /ghw fix [name] first');
 
-  const workdir = pending.workdir;
-  const branchName = pending.branch.name;
+  const workdir = wip.workdir;
+  const branchName = wip.branch.name;
   const defaultBranch = getDefaultBranch(workdir);
 
   // Push branch
@@ -262,38 +262,38 @@ async function cmdPr(args) {
 
   // Get issue body for PR
   let prBody = '';
-  if (pending.issue?.id) {
+  if (wip.issue?.id) {
     try {
       const token = getToken();
-      const issue = await apiRequest('GET', `/repos/${pending.repo}/issues/${pending.issue.id}`, token);
-      prBody = `## 关联 Issue\nCloses #${pending.issue.id}\n\n${issue.body || ''}\n\n---\n_Generated by github-work skill_`;
+      const issue = await apiRequest('GET', `/repos/${wip.repo}/issues/${wip.issue.id}`, token);
+      prBody = `## 关联 Issue\nCloses #${wip.issue.id}\n\n${issue.body || ''}\n\n---\n_Generated by github-work skill_`;
     } catch(e) {}
   }
 
-  const updated = { ...pending, pr: { title: pending.pr?.title || `Fix #${pending.issue?.id || ''}: ${branchName}`, body: prBody }, updatedAt: new Date().toISOString() };
-  savePending(updated);
+  const updated = { ...wip, pr: { title: wip.pr?.title || `Fix #${wip.issue?.id || ''}: ${branchName}`, body: prBody }, updatedAt: new Date().toISOString() };
+  saveWip(updated);
   return { ok: true, branch: branchName, message: `Branch pushed. Run /ghw confirm to create PR` };
 }
 
 async function cmdPush(args) {
-  const pending = getPending();
-  if (!pending.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
-  const workdir = pending.workdir;
+  const wip = getWip();
+  if (!wip.workdir) throw new Error('No workdir set. Run /ghw start <workdir> first');
+  const workdir = wip.workdir;
   const branch = getCurrentBranch(workdir);
 
   // Get diff for commit message generation
   const diff = git('git diff --cached', workdir) || git('git diff', workdir) || '';
   const stats = git('git diff --stat --cached', workdir) || git('git diff --stat', workdir) || '';
 
-  const updated = { ...pending, push: { branch, diff, stats, staged: !!git('git diff --cached', workdir) }, updatedAt: new Date().toISOString() };
-  savePending(updated);
+  const updated = { ...wip, push: { branch, diff, stats, staged: !!git('git diff --cached', workdir) }, updatedAt: new Date().toISOString() };
+  saveWip(updated);
   return { ok: true, branch, stats, message: `Changes staged. Commit message needed. Use /ghw confirm push` };
 }
 
 async function cmdReview(args) {
   const token = getToken();
-  const pending = getPending();
-  const repo = pending.repo || (args[0] && args[0].includes('/') ? args[0] : null);
+  const wip = getWip();
+  const repo = wip.repo || (args[0] && args[0].includes('/') ? args[0] : null);
   if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first, or pass /ghw review owner/repo');
 
   const myLogin = (await apiRequest('GET', '/user', token)).login;
@@ -327,7 +327,7 @@ async function cmdReview(args) {
 
 async function cmdReviewDone(args) {
   const token = getToken();
-  const pending = getPending();
+  const wip = getWip();
   const prRef = args[0];
   const verdict = args[1] || 'approved';
 
@@ -338,9 +338,9 @@ async function cmdReviewDone(args) {
     if (!m) throw new Error(`Invalid PR ref: ${prRef}`);
     owner = m[1]; repo = m[2]; num = parseInt(m[3]);
   } else {
-    if (!pending.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
+    if (!wip.repo) throw new Error('No repo set. Run /ghw start <workdir> first');
     num = parseInt(prRef);
-    [owner, repo] = pending.repo.split('/');
+    [owner, repo] = wip.repo.split('/');
   }
 
   const myLogin = (await apiRequest('GET', '/user', token)).login;
@@ -377,8 +377,8 @@ async function cmdReviewDone(args) {
 
 async function cmdIssue(args) {
   const token = getToken();
-  const pending = getPending();
-  const repo = args[0] && args[0].includes('/') ? args[0] : pending.repo;
+  const wip = getWip();
+  const repo = args[0] && args[0].includes('/') ? args[0] : wip.repo;
   if (!repo) throw new Error('No repo. Run /ghw start <workdir> first, or pass owner/repo');
   const params = new URLSearchParams({ state: 'open', per_page: '50' });
   const data = await apiRequest('GET', `/repos/${repo}/issues?${params}`, token);
@@ -389,10 +389,10 @@ async function cmdIssue(args) {
 
 async function cmdShow(args) {
   const token = getToken();
-  const pending = getPending();
+  const wip = getWip();
   const id = parseInt(args[0], 10);
   if (isNaN(id)) throw new Error('Usage: /ghw show #<id>');
-  const repo = args[1] && args[1].includes('/') ? args[1] : pending.repo;
+  const repo = args[1] && args[1].includes('/') ? args[1] : wip.repo;
   if (!repo) throw new Error('No repo set. Run /ghw start <workdir> first');
   const data = await apiRequest('GET', `/repos/${repo}/issues/${id}`, token);
   return { ok: true, issue: { number: data.number, title: data.title, body: data.body, state: data.state, url: data.html_url, assignee: data.assignee?.login }, display: `[#${data.number}] ${data.title}\n\n${data.body || ''}\n\nState: ${data.state}\nURL: ${data.html_url}` };
@@ -400,9 +400,9 @@ async function cmdShow(args) {
 
 async function cmdPoll(args) {
   const token = getToken();
-  const pending = getPending();
+  const wip = getWip();
   const myLogin = (await apiRequest('GET', '/user', token)).login;
-  const repos = pending.repo ? [pending.repo] : [];
+  const repos = wip.repo ? [wip.repo] : [];
   if (!repos.length) return { ok: true, results: [], message: 'No repos configured' };
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -439,17 +439,17 @@ async function cmdConfig(args) {
     approvalCount: APPROVAL_COUNT,
     reviewTimeoutHours: REVIEW_TIMEOUT_HOURS,
     hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
-    pending: readJSON(PENDING_FILE) || null,
+    wip: readJSON(wip_FILE) || null,
   };
 }
 
 async function cmdPending(args) {
   const sub = args[0];
-  if (sub === 'get') return { ok: true, pending: getPending() };
-  if (sub === 'clear') { clearPending(); return { ok: true, message: 'Pending cleared' }; }
-  // /ghw pending set --issue-title=X --issue-body=Y ...
+  if (sub === 'get') return { ok: true, wip: getWip() };
+  if (sub === 'clear') { clearWip(); return { ok: true, message: 'Pending cleared' }; }
+  // /ghw wip set --issue-title=X --issue-body=Y ...
   const opts = parseArgs(args.slice(1));
-  const p = { ...getPending() };
+  const p = { ...getWip() };
   if (opts['issue-title']) {
     p.issue = { action: 'update', id: opts['issue-id'] ? parseInt(opts['issue-id']) : null, title: opts['issue-title'], body: opts['issue-body'] || '' };
   }
@@ -458,8 +458,8 @@ async function cmdPending(args) {
   if (opts['repo']) p.repo = opts['repo'];
   if (opts['workdir']) p.workdir = opts['workdir'];
   p.updatedAt = new Date().toISOString();
-  savePending(p);
-  return { ok: true, pending: p };
+  saveWip(p);
+  return { ok: true, wip: p };
 }
 
 function REPOS() {
