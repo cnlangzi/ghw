@@ -22,8 +22,6 @@ GitHub team collaboration workflow skill. Session-based design: drafts go to wip
     "ghw": {
       "env": {
         "GITHUB_ACCESS_TOKEN": "ghp_xxx",
-        "GHW_REPOS": "owner/repo1,owner/repo2",
-        "GHW_WORK_DIR": "/path/to/code",
         "GHW_APPROVAL_COUNT": "1"
       }
     }
@@ -31,7 +29,6 @@ GitHub team collaboration workflow skill. Session-based design: drafts go to wip
 }
 ```
 
-- `GHW_WORK_DIR`: Local code root directory (default: `~/code`)
 
 ---
 

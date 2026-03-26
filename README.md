@@ -48,8 +48,6 @@ Add to `~/.openclaw/openclaw.json`:
         "enabled": true,
         "env": {
           "GITHUB_ACCESS_TOKEN": "ghp_your_personal_access_token",
-          "GHW_REPOS": "owner/repo1,owner/repo2",
-          "GHW_WORK_DIR": "/path/to/code",
           "GHW_APPROVAL_COUNT": "1"
         }
       }
@@ -69,9 +67,7 @@ Add to `~/.openclaw/openclaw.json`:
 Comma-separated list or JSON array:
 
 ```bash
-GHW_REPOS="owner/repo1,owner/repo2"
 # or
-GHW_REPOS='["owner/repo1","owner/repo2"]'
 ```
 
 ### 4. Authenticate (optional, for OAuth Device Flow)
@@ -301,8 +297,6 @@ Agent: eyes Claimed PR #78: Add OAuth login support
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GITHUB_ACCESS_TOKEN` | Yes | - | GitHub Personal Access Token |
-| `GHW_REPOS` | Yes | - | Repo list (comma-separated or JSON array) |
-| `GHW_WORK_DIR` | No | `~/code` | Default root for relative workdir paths |
 | `GHW_APPROVAL_COUNT` | No | `1` | Minimum approvals before merge |
 | `GHW_REVIEW_TIMEOUT_HOURS` | No | `24` | Review claim auto-release timeout |
 | `GITHUB_CLIENT_ID` | No | - | For OAuth Device Flow (instead of PAT) |

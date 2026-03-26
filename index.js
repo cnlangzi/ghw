@@ -22,10 +22,8 @@ const STATE_FILE = path.join(CONFIG_DIR, 'state.json');
 const CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
 const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
 const ACCESS_TOKEN = process.env.GITHUB_ACCESS_TOKEN || '';
-const DEFAULT_OWNER = process.env.GITHUB_DEFAULT_OWNER || '';
 const APPROVAL_COUNT = parseInt(process.env.GHW_APPROVAL_COUNT || '1', 10);
 const REVIEW_TIMEOUT_HOURS = parseInt(process.env.GHW_REVIEW_TIMEOUT_HOURS || '24', 10);
-const WORK_DIR = process.env.GHW_WORK_DIR || path.join(os.homedir(), 'code');
 
 // --- GitHub API ---
 function apiRequest(method, endpoint, token, body = null) {
@@ -104,7 +102,7 @@ function clearWip() { if (fs.existsSync(wip_FILE)) fs.unlinkSync(wip_FILE); }
 
 // --- Git helpers ---
 function git(cmd, cwd) {
-  try { return execSync(cmd, { cwd: cwd || WORK_DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
+  try { return execSync(cmd, { cwd: cwd || process.cwd(), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim(); }
   catch (e) { throw new Error(`Git error: ${e.message}`); }
 }
 
@@ -157,7 +155,8 @@ function parseChecklist(comments, login) {
 async function cmdStart(args) {
   const workdir = args[0];
   if (!workdir) throw new Error('Usage: /ghw start <workdir>');
-  const absWorkdir = path.isAbsolute(workdir) ? workdir : path.join(WORK_DIR, workdir);
+  const absWorkdir = path.isAbsolute(workdir) ? workdir : path.join(process.cwd(), workdir);
+  if (!path.isAbsolute(workdir)) throw new Error('Please use an absolute path, e.g. /Users/name/code/myproject');
   if (!fs.existsSync(absWorkdir)) throw new Error(`Directory not found: ${absWorkdir}`);
   const repo = getRemoteRepo(absWorkdir);
   const wip = { workdir: absWorkdir, repo, createdAt: new Date().toISOString() };
@@ -211,7 +210,7 @@ async function cmdConfirm(args) {
   if (wip.branch?.name && wip.issue?.id) {
     const issueNum = wip.issue.id;
     const branchName = wip.branch.name;
-    const workdir = wip.workdir || WORK_DIR;
+    const workdir = wip.workdir;
     const [owner, repoName] = wip.repo.split('/');
     const shaResp = await apiRequest('GET', `/repos/${wip.repo}/git/ref/heads/${getDefaultBranch(workdir)}`, token);
     await apiRequest('POST', `/repos/${wip.repo}/git/refs`, token, { ref: `refs/heads/${branchName}`, sha: shaResp.object.sha });
@@ -221,7 +220,7 @@ async function cmdConfirm(args) {
 
   // PR
   if (wip.pr?.title) {
-    const workdir = wip.workdir || WORK_DIR;
+    const workdir = wip.workdir;
     const baseBranch = getDefaultBranch(workdir);
     const headBranch = wip.branch?.name || getCurrentBranch(workdir);
     const body = wip.pr.body || `Closes #${wip.issue?.id || '?'}`;
@@ -439,7 +438,7 @@ async function cmdConfig(args) {
   return {
     ok: true,
     repos: REPOS,
-    workDir: WORK_DIR,
+    workDir: process.cwd(),
     approvalCount: APPROVAL_COUNT,
     reviewTimeoutHours: REVIEW_TIMEOUT_HOURS,
     hasToken: !!(ACCESS_TOKEN || readJSON(TOKEN_FILE)?.access_token),
@@ -466,12 +465,6 @@ async function cmdPending(args) {
   return { ok: true, wip: p };
 }
 
-function REPOS() {
-  const r = process.env.GHW_REPOS || '';
-  if (!r) return [];
-  try { const p = JSON.parse(r); if (Array.isArray(p)) return p; } catch(e) {}
-  return r.split(',').map(s => s.trim()).filter(Boolean);
-}
 
 // --- Utils ---
 function parseArgs(args) {
