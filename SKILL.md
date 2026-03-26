@@ -1,12 +1,12 @@
 ---
 name: ghw
-description: ghw - GitHub team workflow skill. Session-based workflow with LLM-assisted issue generation and git operations.
+description: ghw - GitHub team workflow automation with auto-driven PR review. Label-based state machine.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
-# ghw (ghw)
+# ghw
 
-GitHub team collaboration workflow skill. Session-based design: drafts go to wip.json, confirm before executing.
+GitHub team workflow automation. Auto-driven PR review with label-based state machine.
 
 ## Usage
 
@@ -21,171 +21,100 @@ GitHub team collaboration workflow skill. Session-based design: drafts go to wip
   "entries": {
     "ghw": {
       "env": {
-        "GITHUB_ACCESS_TOKEN": "ghp_xxx",
+        "GITHUB_ACCESS_TOKEN": "ghp_xxx"
       }
     }
   }
 }
 ```
 
+## Label System
+
+PR state is tracked via mutually exclusive `ghw/*` labels:
+
+| Label | Meaning |
+|-------|---------|
+| `ghw/ready` | PR created, waiting for review |
+| `ghw/wip` | Review in progress |
+| `ghw/lgtm` | Approved |
+| `ghw/revise` | Changes requested |
+
+Only one `ghw/*` label can exist on a PR at a time.
 
 ---
 
-## Command Reference
+## Commands
 
-### Workflow Setup
-
-```
-/ghw start <workdir>
-```
-Resolves git remote from a local directory and writes it to wip.json. All subsequent commands use this repo.
+### Automation Pool
 
 ```
-/ghw new
-```
-LLM reads the conversation, generates an Issue draft (title + body), and writes it to wip.json. No GitHub API call.
+/ghw auto add <owner/repo>
+    Add repo to automation pool. Creates ghw/* labels on first use.
 
-```
-/ghw update #<id>
-```
-LLM re-reads the conversation to update Issue #<id>'s draft in wip.json.
+/ghw auto remove <owner/repo>
+    Remove repo from automation pool.
 
+/ghw auto list
+    List all repos in the automation pool.
 ```
-/ghw confirm
-```
-Executes all pending operations in wip.json:
-- `issue.action == 'create'` -> creates Issue
-- `issue.action == 'update'` -> updates Issue
-- `branch.name` is set -> creates branch (linked to issue)
-- `pr.title` is set -> creates Pull Request (linked to issue)
-After execution, wip.json is cleared.
-
----
-
-### Git Operations
-
-```
-/ghw fix [name]
-```
-- `git fetch origin`
-- `git checkout main`
-- `git pull --rebase origin main`
-- `git checkout -b <name>` (default: `fix/<timestamp>`)
-Result written to wip.json.branch.
-
-```
-/ghw pr
-```
-- `git push -u origin <branch>`
-- Generates PR title/body (linked to issue)
-- Result written to wip.json.pr — execute with `/ghw confirm`
-
-```
-/ghw push
-```
-- `git add -A`
-- Shows staged changes summary
-- LLM generates a [Conventional Commits](https://www.conventionalcommits.org/) formatted commit message
-- `git commit && git push`
-
----
 
 ### Review
 
 ```
 /ghw review
-```
-Finds the earliest unclaimed open PR in wip.json's repo and:
-1. Claims it with eyes
-2. Posts a review checklist
-3. Returns PR title, linked issue, diff, and checklist
+    Pick a repo from the automation pool (round-robin), find the oldest
+    ghw/ready PR, claim it (replace ghw/ready -> ghw/wip), return PR
+    details and diff for agent review.
 
-Agent reviews the diff against the issue, then calls:
-```
-/ghw review #<pr> approved   # or changes
-```
-Posts verdict, releases claim, submits GitHub Official Review.
-
-
-
-### Information
-
-```
-/ghw issue              # Lists open issues in current repo (from wip.json)
-/ghw show #<id>         # Shows Issue #<id> details
-/ghw poll issue         # Top 10 open issues, oldest first
-/ghw poll pr           # Top 10 open PRs, oldest first
-/ghw config            # Shows config and wip.json contents
+/ghw review #<pr> approved|revise
+    Submit review verdict on the PR:
+    - approved  -> ghw/wip -> ghw/lgtm, submit APPROVED review
+    - revise    -> ghw/wip -> ghw/revise, submit CHANGES_REQUESTED review
 ```
 
----
+Review flow:
+1. ghw/ready PR created by developer
+2. /ghw review -> agent picks it up, sets ghw/wip
+3. Agent reviews diff + linked issue
+4. /ghw review #<pr> approved|revise -> updates label + submits review
+5. Developer fixes -> re-adds ghw/ready -> loop
 
-## wip.json Schema
-
-File: `~/.openclaw/ghw/wip.json`
-
-```json
-{
-  "workdir": "/path/to/workdir",
-  "repo": "owner/repo",
-  "issue": { "action": "create|update", "id": null, "title": "", "body": "" },
-  "branch": { "name": "" },
-  "pr": { "title": "", "body": "" },
-  "createdAt": "ISO"
-}
-```
-
----
-
-## Standard Workflow
+### Git Operations
 
 ```
-You: /ghw start ~/code/myproject
-Agent: workdir set, repo: owner/repo
+/ghw fix <workdir> [branch-name]
+    Fetch/rebase main, create new branch. Returns branch name.
 
-You: /ghw new
-Agent: Generates Issue draft:
-       Title: xxx
-       Body: ...
-       [wip.json — run /ghw confirm]
+/ghw pr <workdir> [title]
+    Push branch, create PR with ghw/ready label, link to issue if branch
+    name contains issue number (e.g. fix/123).
 
-You: /ghw fix login-bug
-Agent: Branch fix/login-bug created (rebased on main)
-       [wip.json — run /ghw confirm]
+/ghw push <workdir>
+    git add -A, show diff summary. Use /ghw confirm to commit and push.
 
-You: /ghw pr
-Agent: Branch pushed. Run /ghw confirm
-
-You: /ghw confirm
-Agent: Issue #45 created
-       Branch created
-       PR #78 created
-       [wip.json cleared]
+/ghw confirm <workdir> [commit-msg]
+    Commit staged changes and push.
 ```
 
----
+### Info
 
-## Cron Configuration
+```
+/ghw issue <owner/repo> [--state=open|closed|all]
+    List open issues in a repo.
 
-```json
-"cron": {
-  "entries": {
-    "ghw-poll": {
-      "schedule": "*/15 * * * *",
-      "task": "/ghw poll",
-      "enabled": false
-    }
-  }
-}
+/ghw show #<pr>
+    Show PR/issue details and labels. Uses last-reviewed repo context.
+
+/ghw config
+    Show automation pool repos and token status.
 ```
 
 ---
 
 ## Implementation
 
-- **Entry**: `scripts/index.js` (Node.js, no npm dependencies)
-- **Token**: PAT or OAuth Device Flow
-- **Git**: Direct local git command execution
-- **GitHub API**: REST API v3
-- **Storage**: `~/.openclaw/ghw/wip.json` (0600)
-- **Dependencies**: None (pure Node.js built-ins only)
+- Entry: `scripts/index.js` (Node.js, no dependencies)
+- Token: PAT or OAuth Device Flow
+- Auto repos: `~/.openclaw/ghw/auto-repos.json`
+- Labels: auto-created on first use
+- Mutual exclusion: only one ghw/* label per PR
