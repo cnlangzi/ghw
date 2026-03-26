@@ -526,13 +526,27 @@ async function configShow(args) {
 }
 
 // --- Utils ---
+const SHORT_ALIASES = { n: 'new', ls: 'list', s: 'show', u: 'update', m: 'merge', c: 'claim', d: 'done' };
+
 function parseArgs(args) {
   const opts = {};
   for (const arg of args) {
+    // Short flags: -r value, -s value, etc.
+    const shortM = arg.match(/^-([a-z])$/);
+    if (shortM) { opts[shortM[1]] = true; continue; }
+    const shortValM = arg.match(/^-([a-z])\s+(.+)$/);
+    if (shortValM) { opts[shortValM[1]] = shortValM[2]; continue; }
     const m = arg.match(/^--([a-zA-Z0-9-]+)(?:=(.+))?$/);
     if (m) { opts[m[1]] = m[2] !== undefined ? m[2] : true; }
     else { if (!opts._) opts._ = []; opts._.push(arg); }
   }
+  // Expand short aliases in positional args
+  if (opts._) opts._ = opts._.map(a => SHORT_ALIASES[a] || a);
+  // Short flag expansions
+  if (opts.r !== undefined && opts.repo === undefined) opts.repo = opts.r;
+  if (opts.s !== undefined && opts.state === undefined) opts.state = opts.s;
+  if (opts.l !== undefined && opts.label === undefined) opts.label = opts.l;
+  if (opts.a !== undefined && opts.assignee === undefined) opts.assignee = opts.a;
   return opts;
 }
 
@@ -548,35 +562,35 @@ async function main() {
       case 'auth': result = await deviceFlow(); break;
       case 'issue':
         switch (args[0]) {
-          case 'new': result = await issueNew(args.slice(1)); break;
-          case 'list': result = await issueList(args.slice(1)); break;
-          case 'show': result = await issueShow(args.slice(1)); break;
-          case 'update': result = await issueUpdate(args.slice(1)); break;
-          default: throw new Error('Unknown: issue new|list|show|update');
+          case 'new': case 'n': result = await issueNew(args.slice(1)); break;
+          case 'list': case 'ls': case 'l': result = await issueList(args.slice(1)); break;
+          case 'show': case 's': result = await issueShow(args.slice(1)); break;
+          case 'update': case 'u': result = await issueUpdate(args.slice(1)); break;
+          default: throw new Error('Unknown: issue n|ls|s|u');
         }
         break;
       case 'branch':
         switch (args[0]) {
-          case 'new': result = await branchNew(args.slice(1)); break;
-          case 'list': result = await branchList(args.slice(1)); break;
-          default: throw new Error('Unknown: branch new|list');
+          case 'new': case 'n': result = await branchNew(args.slice(1)); break;
+          case 'list': case 'ls': case 'l': result = await branchList(args.slice(1)); break;
+          default: throw new Error('Unknown: branch n|ls');
         }
         break;
       case 'pr':
         switch (args[0]) {
-          case 'new': result = await prNew(args.slice(1)); break;
-          case 'list': result = await prList(args.slice(1)); break;
-          case 'show': result = await prShow(args.slice(1)); break;
-          case 'merge': result = await prMerge(args.slice(1)); break;
-          default: throw new Error('Unknown: pr new|list|show|merge');
+          case 'new': case 'n': result = await prNew(args.slice(1)); break;
+          case 'list': case 'ls': case 'l': result = await prList(args.slice(1)); break;
+          case 'show': case 's': result = await prShow(args.slice(1)); break;
+          case 'merge': case 'm': result = await prMerge(args.slice(1)); break;
+          default: throw new Error('Unknown: pr n|ls|s|m');
         }
         break;
       case 'review':
         switch (args[0]) {
-          case 'claim': result = await reviewClaim(args.slice(1)); break;
-          case 'done': result = await reviewDone(args.slice(1)); break;
-          case 'list': result = await reviewList(args.slice(1)); break;
-          default: throw new Error('Unknown: review claim|done|list');
+          case 'claim': case 'c': result = await reviewClaim(args.slice(1)); break;
+          case 'done': case 'd': result = await reviewDone(args.slice(1)); break;
+          case 'list': case 'ls': case 'l': result = await reviewList(args.slice(1)); break;
+          default: throw new Error('Unknown: review c|d|ls');
         }
         break;
       case 'poll': result = await poll(args); break;

@@ -11,7 +11,7 @@ GitHub 团队协作工作流 skill，支持多仓库。
 ## 调用方式
 
 ```
-/ghw <subcommand> [args]
+/ghw <command> [args]
 ```
 
 ## 快速配置
@@ -37,7 +37,7 @@ GitHub 团队协作工作流 skill，支持多仓库。
 
 ---
 
-## Subcommands
+## 命令一览
 
 ### 认证
 ```
@@ -46,53 +46,54 @@ GitHub 团队协作工作流 skill，支持多仓库。
 
 ### Issue
 ```
-/ghw issue new <title>                       # 所有 repo
-/ghw issue new <title> --repo owner/repo     # 指定 repo
-/ghw issue list                              # 所有 repo
-/ghw issue list --repo owner/repo
-/ghw issue list --state=open|closed|all
-/ghw issue show <number> --repo owner/repo
-/ghw issue update <number> [--title=] [--body=] [--state=open|closed] [--assignee=user] [--label=x,y]
+/ghw issue n <title>               # 创建 Issue（所有 repo）
+/ghw issue n <title> -r owner/repo  # 创建 Issue（指定 repo）
+/ghw issue ls                       # 列出 Issue（所有 repo）
+/ghw issue ls -r owner/repo         # 列出 Issue（指定 repo）
+/ghw issue ls -s open|closed|all    # 按状态过滤
+/ghw issue s <number> -r owner/repo # 查看 Issue
+/ghw issue u <number> [opts]        # 更新 Issue
 ```
+**选项**：
+- `-r, --repo owner/repo` — 指定仓库
+- `-s, --state open|closed|all` — 状态过滤
+- `-a, --assignee user` — 按负责人过滤
+- `-l, --label x,y` — 按标签过滤
 
-### Branch（需指定 repo）
+### Branch
 ```
-/ghw branch new <issue-number> --repo owner/repo
-/ghw branch list --repo owner/repo
+/ghw branch n <issue-number> -r owner/repo   # 创建分支（需指定 repo）
+/ghw branch ls -r owner/repo                   # 列出分支
 ```
 
 ### Pull Request
 ```
-/ghw pr new <issue-number> --repo owner/repo
-/ghw pr list
-/ghw pr list --repo owner/repo
-/ghw pr show <pr-url-or-number>
-/ghw pr merge <pr-url-or-number>       # 需满足最少 approval 数量
+/ghw pr n <issue-number> -r owner/repo   # 创建 PR（需指定 repo）
+/ghw pr ls                                 # 列出 PR（所有 repo）
+/ghw pr ls -r owner/repo                   # 列出 PR（指定 repo）
+/ghw pr ls -s open|closed|merged|all       # 按状态过滤
+/ghw pr s <pr-ref>                         # 查看 PR（自动查找）
+/ghw pr m <pr-ref>                         # Merge PR
 ```
 
 ### Review（两步流程 + Checklist）
 
 ```
-/ghw review claim <pr-url-or-number>
-    留下 👀 认领 PR，附上清单模板（[ ] 状态）。
-    人工开始 review，随时在 comment 中把 [ ] 改成 [x]。
-
-/ghw review done <pr-url-or-number> [approved|changes]
-    检查所有清单项是否全部 [x]，通过则：
-    - 删除所有认领 comment
-    - 留下 ✅ / ❌ 结论 comment
-    - 提交 GitHub Official Review
-
-/ghw review list
-    列出所有待 Review PR（👀 已认领 / 待认领）
+/ghw review c <pr-ref>      # 认领 Review，留 👀 + 清单
+/ghw review d <pr-ref>      # 完成 Review（验证清单全部 [x]）
+/ghw review ls              # 列出所有待 Review PR
 ```
 
-**Emoji 含义**：
-- 👀 = 有人正在 Review（认领标志）
-- ✅ = 可 Merge
-- ❌ = 需修改，打回
+**Review 流程**：
+1. `review c` → 领取 PR，留 👀 + 清单模板
+2. 人工逐项检查，在 comment 中将 `[ ]` 改为 `[x]`
+3. 全部 [x] 后 → `review d` → 通过
 
-**Review 清单项**：
+**选项**：
+- `review d <pr-ref> approved` → ✅ 通过
+- `review d <pr-ref> changes` → ❌ 打回
+
+**Review 清单**：
 ```
 ## Review Checklist
 - [ ] 功能是否符合 Issue 需求描述
@@ -100,26 +101,10 @@ GitHub 团队协作工作流 skill，支持多仓库。
 - [ ] 是否有遗漏内容
 ```
 
-**流程说明**：
-1. `review claim` → 领取 PR，留下 👀 + 清单模板
-2. 人工逐项检查，在 comment 中将 `[ ]` 改为 `[x]`（可多次更新同一 comment）
-3. 全部 [x] 后 → `review done` → 通过
-4. 有问题 → 留言具体修改意见（不用 `review done`），等 Developer 修完 → 重新 `review claim`
-
-**Emoji 含义**：
-- 👀 = 有人正在 Review（认领标志）
-- ✅ = 可 Merge
-- ❌ = 需修改，打回
-
 ### 轮询
 ```
-/ghw poll                    # 检查所有配置的 repo
-/ghw poll --repo owner/repo  # 只查指定 repo
-
-返回：
-- 🆕 新 Issue（24h）
-- 👀 待认领 PR
-- ✅ 可 Merge 的 PR
+/ghw poll                  # 检查所有 repo
+/ghw poll -r owner/repo    # 只查指定 repo
 ```
 
 ### 配置
@@ -129,13 +114,34 @@ GitHub 团队协作工作流 skill，支持多仓库。
 
 ---
 
-## 多 Repo
+## 全局选项
 
-```
-/ghw issue list                  # 查所有 repo
-/ghw issue list --repo owner/repo1  # 只查 repo1
-/ghw poll                         # 扫所有 repo
-```
+| 短 | 长 | 说明 |
+|----|----|------|
+| `-r` | `--repo owner/repo` | 指定仓库 |
+| `-s` | `--state` | 状态过滤 |
+| `-a` | `--assignee` | 负责人 |
+| `-l` | `--label` | 标签 |
+
+---
+
+## 速查表
+
+| 命令 | 简写 |
+|------|------|
+| `issue new` | `issue n` |
+| `issue list` | `issue ls` |
+| `issue show` | `issue s` |
+| `issue update` | `issue u` |
+| `branch new` | `branch n` |
+| `branch list` | `branch ls` |
+| `pr new` | `pr n` |
+| `pr list` | `pr ls` |
+| `pr show` | `pr s` |
+| `pr merge` | `pr m` |
+| `review claim` | `review c` |
+| `review done` | `review d` |
+| `review list` | `review ls` |
 
 ---
 
