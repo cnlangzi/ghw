@@ -1,8 +1,8 @@
-# github-work
+# ghw
 
 > GitHub team workflow automation - session-based issue generation, git operations, and PR review coordination via CLI.
 
-`github-work` is a skill for [OpenClaw](https://github.com/openclaw/openclaw) that brings structured, LLM-assisted GitHub workflows to your chat interface. Define issues from conversations, manage branches and PRs with a two-phase confirm pattern, and coordinate reviews with an emoji protocol.
+`ghw` is a skill for [OpenClaw](https://github.com/openclaw/openclaw) that brings structured, LLM-assisted GitHub workflows to your chat interface. Define issues from conversations, manage branches and PRs with a two-phase confirm pattern, and coordinate reviews with an emoji protocol.
 
 ## Features
 
@@ -27,7 +27,7 @@ cd ghw
 The skill follows the OpenClaw AgentSkills directory structure:
 
 ```
-github-work/     <- skill directory (name used as /ghw slash command)
+ghw/     <- skill directory (name used as /ghw slash command)
 ├── SKILL.md     <- this file
 ├── README.md
 ├── scripts/
@@ -38,13 +38,13 @@ github-work/     <- skill directory (name used as /ghw slash command)
 Copy or symlink to your OpenClaw workspace:
 
 ```bash
-cp -r github-work ~/workspace/skills/
+cp -r ghw ~/workspace/skills/
 ```
 
 Or use the OpenClaw CLI:
 
 ```bash
-openclaw skills install ./github-work
+openclaw skills install ./ghw
 ```
 
 ### 3. Configure credentials
@@ -256,13 +256,13 @@ Agent: eyes Claimed PR #78: Add OAuth login support
 ## Architecture
 
 ```
-~/.openclaw/github-work/          # Runtime state (skill creates this)
+~/.openclaw/ghw/          # Runtime state (skill creates this)
 ├── wip.json      # Work In Progress draft state
 ├── token.json    # OAuth access token (0600)
 └── state.json    # Optional persistent state
 
 skill directory structure:
-github-work/
+ghw/
 ├── SKILL.md       # This file
 ├── README.md
 ├── scripts/

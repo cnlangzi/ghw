@@ -1,10 +1,10 @@
 ---
 name: ghw
-description: github-work - GitHub team workflow skill. Session-based workflow with LLM-assisted issue generation and git operations.
+description: ghw - GitHub team workflow skill. Session-based workflow with LLM-assisted issue generation and git operations.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
-# github-work (ghw)
+# ghw (ghw)
 
 GitHub team collaboration workflow skill. Session-based design: drafts go to wip.json, confirm before executing.
 
@@ -122,7 +122,7 @@ Posts verdict, releases claim, submits GitHub Official Review.
 
 ## wip.json Schema
 
-File: `~/.openclaw/github-work/wip.json`
+File: `~/.openclaw/ghw/wip.json`
 
 ```json
 {
@@ -187,5 +187,5 @@ Agent: Issue #45 created
 - **Token**: PAT or OAuth Device Flow
 - **Git**: Direct local git command execution
 - **GitHub API**: REST API v3
-- **Storage**: `~/.openclaw/github-work/wip.json` (0600)
+- **Storage**: `~/.openclaw/ghw/wip.json` (0600)
 - **Dependencies**: None (pure Node.js built-ins only)
