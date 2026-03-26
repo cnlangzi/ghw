@@ -22,7 +22,6 @@ GitHub team collaboration workflow skill. Session-based design: drafts go to wip
     "ghw": {
       "env": {
         "GITHUB_ACCESS_TOKEN": "ghp_xxx",
-        "GHW_APPROVAL_COUNT": "1"
       }
     }
   }
