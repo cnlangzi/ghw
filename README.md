@@ -1,173 +1,95 @@
-# ghw
+# gtw - Git Team Workflow
 
-> Git Team Workflow automation - auto-driven PR review with label-based state machine.
+> Session-based GitHub workflow automation with auto-driven PR review.
 
-`ghw` is a skill for [OpenClaw](https://github.com/openclaw/openclaw) that automates the PR review lifecycle using GitHub labels. No session state, no wip.json - just a repo pool and a label protocol.
+`gtw` brings structured GitHub workflows to your OpenClaw chat interface. Issues and PRs are drafted first, confirmed later — no accidental API calls. Review is auto-driven via label state machine.
 
 ## Features
 
-- **Auto-driven review** - `/gtw review` picks a repo and PR automatically, agent reviews the diff.
-- **Label-based state machine** - PR state tracked via mutually exclusive `ghw/*` labels.
-- **Round-robin** - Reviews are distributed across repos evenly.
-- **Zero session state** - No wip.json, no workdir context. Just repos and labels.
-- **Auto label creation** - `ghw/*` labels are created on first use.
-- **No npm dependencies** - Pure Node.js built-ins.
+- **Session-based**: `/gtw on` sets context; all write ops are drafts until `/gtw confirm`
+- **Two-phase confirm**: issue drafts, branch creation, and PR creation all deferred to `/gtw confirm`
+- **Auto-driven review**: `/gtw review` picks oldest ghw/ready PR, agent reviews diff, verdict via label
+- **Label protocol**: ghw/ready → ghw/wip → ghw/lgtm | ghw/revise
+- **No dependencies**: pure Node.js, no npm packages needed
 
 ## Installation
 
 ```bash
-git clone https://github.com/cnlangzi/ghw.git
-cp -r ghw ~/workspace/skills/
+# Clone and link
+git clone https://github.com/cnlangzi/gtw.git
+cp -r gtw ~/workspace/skills/
+
+# Configure token
+# Add to ~/.openclaw/openclaw.json:
+# "skills": { "entries": { "gtw": { "enabled": true, "env": { "GITHUB_ACCESS_TOKEN": "ghp_xxx" } } } }
 ```
 
-Configure your GitHub Personal Access Token in `~/.openclaw/openclaw.json`:
+## Commands
 
-```json
-{
-  "skills": {
-    "entries": {
-      "ghw": {
-        "enabled": true,
-        "env": {
-          "GITHUB_ACCESS_TOKEN": "ghp_your_token_here"
-        }
-      }
-    }
-  }
-}
-```
-
-## Label System
-
-All `ghw/*` labels are mutually exclusive - only one can exist on a PR at a time:
-
-| Label | Meaning | Who sets it |
-|-------|---------|-------------|
-| `ghw/ready` | Waiting for review | Developer (`/gtw pr`) |
-| `ghw/wip` | Review in progress | Agent (`/gtw review`) |
-| `ghw/lgtm` | Approved | Agent (`/gtw review #<pr> lgtm`) |
-| `ghw/revise` | Changes requested | Agent (`/gtw review #<pr> revise`) |
-
-## Quick Start
-
-### 1. Add repos to automation pool
-
-```bash
-/gtw auto add owner/repo1
-/gtw auto add owner/repo2
-/gtw auto list
-```
-
-### 2. Create a PR
-
-```bash
-# Work on your feature
-cd ~/code/myproject
-git checkout -b fix/123
-
-# After your changes
-/gtw pr ~/code/myproject
-# -> Pushes branch, creates PR with ghw/ready label
-```
-
-### 3. Review
-
-```bash
-# Agent picks up the PR automatically
-/gtw review
-# -> Claims ghw/ready PR, sets ghw/wip, returns diff
-
-# After reviewing the diff and linked issue:
-/gtw review #45 lgtm   # -> ghw/lgtm
-/gtw review #45 revise     # -> ghw/revise
-```
-
-## Command Reference
-
-### Automation Pool
-
-```
-/gtw auto add owner/repo    Add repo to pool (creates ghw/* labels on first use)
-/gtw auto remove owner/repo Remove repo from pool
-/gtw auto list              List all repos in pool
-```
-
-### Review
-
-```
-/gtw review                     Pick repo + PR, claim (ghw/wip), return diff
-/gtw review #<pr> lgtm     Approve: ghw/wip -> ghw/lgtm
-/gtw review #<pr> revise       Request changes: ghw/wip -> ghw/revise
-```
+### Session Setup
+| Command | Description |
+|---------|-------------|
+| `/gtw on <workdir>` | Set workdir + repo in session |
+| `/gtw new [title] [body]` | Issue draft (no API) |
+| `/gtw update #<id> [title]` | Update issue draft (no API) |
+| `/gtw confirm` | Execute all: issue + branch + PR, then clear |
 
 ### Git Operations
+| Command | Description |
+|---------|-------------|
+| `/gtw fix [name]` | Create local branch (rebased on main) |
+| `/gtw pr [title]` | Push branch, PR draft in session |
+| `/gtw push` | Stage diff, commit via confirm |
+
+### Review
+| Command | Description |
+|---------|-------------|
+| `/gtw review` | Claim oldest ghw/ready PR |
+| `/gtw review #<pr> lgtm\|revise` | Verdict: ghw/lgtm or ghw/revise |
+
+### Pool & Info
+| Command | Description |
+|---------|-------------|
+| `/gtw auto add\|remove\|list` | Manage automation pool |
+| `/gtw issue [owner/repo]` | List open issues |
+| `/gtw show #<pr>` | Show PR/issue details |
+| `/gtw config` | Show token + wip.json + pool |
+
+## Label States
+
+| Label | State | Set By |
+|-------|-------|--------|
+| `ghw/ready` | Waiting for review | Developer (`/gtw confirm`) |
+| `ghw/wip` | Review in progress | Agent (`/gtw review`) |
+| `ghw/lgtm` | Approved | Agent (`/gtw review # pr lgtm`) |
+| `ghw/revise` | Changes requested | Agent (`/gtw review # pr revise`) |
+
+## Workflow
 
 ```
-/gtw fix <workdir> [name]      Fetch/rebase main, create branch
-/gtw pr <workdir> [title]     Push branch, create PR with ghw/ready
-/gtw push <workdir>            Stage changes (git add -A)
-/gtw confirm <workdir> [msg]   Commit and push
+# Developer creates PR
+/gtw on ~/code/project
+/gtw new "Add OAuth login" "..."
+/gtw fix feature/123
+  -> coding...
+/gtw push
+/gtw confirm "feat: add oauth"
+  -> creates issue + GitHub branch + PR with ghw/ready
+
+# Agent reviews
+/gtw auto add owner/project   # one-time pool setup
+/gtw review
+  -> ghw/wip Claimed PR #45 with diff
+  -> agent reviews
+/gtw review #45 lgtm
+  -> ghw/lgtm applied
 ```
 
-### Info
+## Session File
 
 ```
-/gtw issue owner/repo [--state=open]   List issues
-/gtw show #<pr>                        Show PR details
-/gtw config                             Show auto repos and token status
+~/.openclaw/gtw/
+├── config.json   # automation pool repos + lastRepo
+├── token.json    # GitHub OAuth token
+└── wip.json      # session context (workdir, repo, issue/branch/pr drafts)
 ```
-
-## Workflow Diagram
-
-```
-Developer                  Agent                    GitHub
-   |                        |                        |
-   |-- /gtw pr ------------>|                        |
-   |                        |-- push + PR + ghw/ready -->|
-   |                        |                        |
-   |                        |-- /gtw review -------->|
-   |                        |<--- PR diff + issue ----|
-   |                        |                        |
-   |<-- review result -----|                        |
-   |                        |-- ghw/wip label ------->|
-   |                        |                        |
-   |  (code changes)        |                        |
-   |                        |                        |
-   |                        |-- /gtw review #<pr> ->|
-   |                        |   lgtm|revise     |
-   |                        |-- ghw/lgtm/ghw/revise ->|
-   |                        |                        |
-```
-
-## Architecture
-
-```
-~/.openclaw/ghw/
-├── token.json       # OAuth access token (0600)
-└── config.json # Automation pool {"repos": [], "lastRepo": null}
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_ACCESS_TOKEN` | Yes | GitHub Personal Access Token |
-| `GITHUB_CLIENT_ID` | No | For OAuth Device Flow (instead of PAT) |
-| `GITHUB_CLIENT_SECRET` | No | For OAuth Device Flow |
-
-## Cron Setup
-
-Set up periodic review polling:
-
-```bash
-openclaw cron add \
-  --name "ghw-review" \
-  --cron "*/15 * * * *" \
-  --session main \
-  --system-event "/gtw review" \
-  --enabled
-```
-
-## Contributing
-
-Contributions follow [Conventional Commits](https://www.conventionalcommits.org/).

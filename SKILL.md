@@ -4,67 +4,61 @@ description: gtw - Git Team Workflow automation with auto-driven PR review. Labe
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
-# ghw
+# gtw - Git Team Workflow
 
-Git Team Workflow automation. Auto-driven PR review with label-based state machine.
+Session-based issue generation, git operations, and auto-driven PR review via CLI.
 
-## Usage
+## Core Design
 
-```
-/gtw <command> [args]
-```
+**Two-phase confirm pattern**: all write operations are drafts until `/gtw confirm`:
+- `/gtw on` + `/gtw new/fix/pr` write drafts to `wip.json` (no API calls)
+- `/gtw confirm` executes all pending actions at once, then clears
 
-## Configuration
-
-```json
-"skills": {
-  "entries": {
-    "ghw": {
-      "env": {
-        "GITHUB_ACCESS_TOKEN": "ghp_xxx"
-      }
-    }
-  }
-}
-```
-
-## Label System
-
-PR state is tracked via mutually exclusive `ghw/*` labels:
-
-| Label | Meaning |
-|-------|---------|
-| `ghw/ready` | PR created, waiting for review |
-| `ghw/wip` | Review in progress |
-| `ghw/lgtm` | Approved |
-| `ghw/revise` | Changes requested |
-
-Only one `ghw/*` label can exist on a PR at a time.
+**Label-based review**: agents claim PRs via `ghw/wip`, verdict via `ghw/lgtm` or `ghw/revise`.
 
 ---
 
-## Commands
-
-### Session Context
-
-All git operations share the same workdir/repo context once set.
+## Session Commands (write to wip.json)
 
 ```
 /gtw on <workdir>
-    Set workdir and repo in session context (wip.json).
+    Set workdir and repo in session context. Required first step.
 
 /gtw new [title] [body]
-    Create an issue draft in session context.
+    Create an issue draft in session context. No API call.
 
 /gtw update #<id> [title]
-    Update an existing issue draft in session context.
+    Update an existing issue draft in session context. No API call.
 
 /gtw confirm
-    Execute all pending actions (create/update issue, create PR, etc.)
-    stored in session context, then clear.
+    Execute all pending actions from session:
+    - issue (create/update)
+    - GitHub branch ref (if branch.name + issue.id)
+    - PR (if pr.title)
+    Then clear session.
 ```
 
-### Automation Pool
+---
+
+## Git Operations
+
+```
+/gtw fix [branch-name]
+    Create local branch (fetch/rebase main + checkout -b).
+    Writes branch to session. No push, no GitHub ref.
+
+/gtw pr [title]
+    Push branch to origin. Generate PR draft in session.
+    No PR created on GitHub until /gtw confirm.
+
+/gtw push
+    git add -A, show diff. Writes to session.
+    Use /gtw confirm to commit and push.
+```
+
+---
+
+## Automation Pool
 
 ```
 /gtw auto add <owner/repo>
@@ -77,63 +71,63 @@ All git operations share the same workdir/repo context once set.
     List all repos in the automation pool.
 ```
 
-### Review
+---
+
+## Auto-Driven Review
 
 ```
 /gtw review
-    Pick a repo from the automation pool (round-robin), find the oldest
-    ghw/ready PR, claim it (replace ghw/ready -> ghw/wip), return PR
-    details and diff for agent review.
+    Pick a repo (round-robin), find oldest ghw/ready PR, claim it
+    (ghw/ready -> ghw/wip), return PR diff + linked issue for review.
 
 /gtw review #<pr> lgtm|revise
-    Submit review verdict on the PR:
-    - lgtm   -> ghw/wip -> ghw/lgtm
+    - lgtm  -> ghw/wip -> ghw/lgtm
     - revise -> ghw/wip -> ghw/revise
 ```
 
 Review flow:
-1. ghw/ready PR created by developer
-2. /gtw review -> agent picks it up, sets ghw/wip
+1. PR created with ghw/ready label
+2. `/gtw review` -> agent claims ghw/wip, returns diff
 3. Agent reviews diff + linked issue
-4. /gtw review #<pr> lgtm|revise -> updates label only
+4. `/gtw review #<pr> lgtm` or `revise` -> updates label only
 5. Developer fixes -> re-adds ghw/ready -> loop
 
-### Git Operations
+---
+
+## Info
 
 ```
-/gtw fix [branch-name]
-    Fetch/rebase main, create new branch. Uses session workdir from /gtw on.
-
-/gtw pr [title]
-    Push branch, create PR with ghw/ready label, link to issue if branch
-    name contains issue number (e.g. fix/123).
-
-/gtw push
-    git add -A, show diff summary. Uses session workdir from /gtw on.
-
-/gtw confirm [commit-msg]
-    Commit staged changes and push.
-```
-
-### Info
-
-```
-/gtw issue <owner/repo> [--state=open|closed|all]
-    List open issues in a repo.
+/gtw issue [owner/repo] [--state=open|closed|all]
+    List open issues in repo. Uses session repo context if not provided.
 
 /gtw show #<pr>
-    Show PR/issue details and labels. Uses last-reviewed repo context.
+    Show PR/issue details. Uses session or review context.
 
 /gtw config
-    Show automation pool repos and token status.
+    Show config status: token, session (wip.json), pool repos.
 ```
 
 ---
 
-## Implementation
+## Full Workflow
 
-- Entry: `scripts/index.js` (Node.js, no dependencies)
-- Token: PAT or OAuth Device Flow
-- Auto repos: `~/.openclaw/ghw/config.json`
-- Labels: auto-created on first use
-- Mutual exclusion: only one ghw/* label per PR
+```
+# Developer: create PR via session
+/gtw on ~/code/project
+/gtw new "Add OAuth login" "## Description\n..."
+/gtw fix feature/123
+  -> coding...
+/gtw push
+/gtw confirm "feat: add oauth login"
+  -> commits and pushes (via push session)
+  -> creates issue (via new session)
+  -> creates GitHub branch + PR (via confirm)
+
+# Agent: review via automation pool
+/gtw auto add owner/project
+/gtw review
+  -> claims PR, returns diff
+  -> agent reviews
+/gtw review #45 lgtm
+  -> ghw/lgtm label applied
+```
