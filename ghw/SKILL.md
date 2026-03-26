@@ -1,12 +1,12 @@
 ---
 name: ghw
-description: github-work - GitHub team workflow skill. Multi-repo support. Manage issues, branches, PRs, and team review via GitHub API.
+description: github-work - GitHub team workflow skill. Session-based workflow with LLM-assisted issue generation and git operations.
 metadata: {"openclaw":{"user-invocable":true,"emoji":"🔧"}}
 ---
 
 # github-work (ghw)
 
-GitHub 团队协作工作流 skill，支持多仓库。
+GitHub 团队协作工作流 skill。Session-based 设计：草稿写入 pending，确认后执行。
 
 ## 调用方式
 
@@ -14,134 +14,165 @@ GitHub 团队协作工作流 skill，支持多仓库。
 /ghw <command> [args]
 ```
 
-## 快速配置
-
-**最少需要**：
-1. `GITHUB_ACCESS_TOKEN` — GitHub Personal Access Token
-2. `GHW_REPOS` — 仓库列表（逗号分隔或 JSON 数组）
-
-配置在 `~/.openclaw/openclaw.json` → `skills.entries.ghw.env`：
+## 配置
 
 ```json
-"ghw": {
-  "enabled": true,
-  "env": {
-    "GITHUB_ACCESS_TOKEN": "ghp_xxx",
-    "GHW_REPOS": "owner/repo1,owner/repo2",
-    "GITHUB_DEFAULT_OWNER": "your_username",
-    "GHW_APPROVAL_COUNT": "1",
-    "GHW_REVIEW_TIMEOUT_HOURS": "24"
+"skills": {
+  "entries": {
+    "ghw": {
+      "env": {
+        "GITHUB_ACCESS_TOKEN": "ghp_xxx",
+        "GHW_REPOS": "owner/repo1,owner/repo2",
+        "GHW_WORK_DIR": "/path/to/code",
+        "GHW_APPROVAL_COUNT": "1"
+      }
+    }
   }
+}
+```
+
+- `GHW_WORK_DIR`：本地代码根目录（默认 `~/code`）
+
+---
+
+## 命令体系
+
+### 工作流命令
+
+```
+/ghw start <workdir>
+```
+从本地目录获取 git remote repo，写入 pending。
+- `workdir` 可以是绝对路径或相对于 `GHW_WORK_DIR` 的路径
+
+```
+/ghw new
+```
+LLM 提炼聊天内容 → 生成 Issue 草稿（title + body）→ 写入 pending（不执行 GitHub 操作）
+
+```
+/ghw update #<id>
+```
+LLM 提炼聊天内容 → 更新 Issue #id 草稿 → 写入 pending
+
+```
+/ghw confirm
+```
+执行 pending 中所有操作：
+- `issue.action == 'create'` → 创建 Issue
+- `issue.action == 'update'` → 更新 Issue
+- `branch.name` 有值 → 创建分支（关联 issue label）
+- `pr.title` 有值 → 创建 PR（关联 issue）
+
+执行后自动清空 pending。
+
+---
+
+### Git 操作
+
+```
+/ghw fix [name]
+```
+- `git fetch origin`
+- `git checkout main`
+- `git pull --rebase origin main`
+- `git checkout -b <name>`（默认 `fix/<timestamp>`）
+- 结果写入 pending.branch
+
+```
+/ghw pr
+```
+- `git push -u origin <branch>`
+- 生成 PR title/body（关联 issue）
+- 结果写入 pending.pr
+- 需要先 `fix` 创建分支
+
+```
+/ghw push
+```
+- `git add -A`
+- 展示 staged changes 摘要
+- 等待 commit message（由 agent LLM 生成）
+- `git commit` + `git push`
+
+---
+
+### Review
+
+```
+/ghw review
+```
+从 pending.repo 找最早未认领的 PR，立即 👀 claim → 写入 checklist → 返回待 review 状态
+
+```
+/ghw review d <pr-ref> [approved|changes]
+```
+完成 Review：
+- 检查所有 checklist 项是否 [x]
+- 未全部 [x] → 报错返回未完成项
+- 全部 [x] → 删除 claim comment → 提交 ✅/❌ Review
+
+---
+
+### 信息查询
+
+```
+/ghw issue              # 列出 pending.repo 的 open Issue
+/ghw show #<id>         # 查看 pending.repo 的 Issue #id
+/ghw poll               # 轮询所有 repo（new issues / unclaimed PRs / merge-ready PRs）
+/ghw config             # 查看当前配置和 pending 状态
+```
+
+---
+
+## Pending 状态
+
+文件：`~/.openclaw/github-work/pending.json`
+
+```json
+{
+  "workdir": "/path/to/workdir",
+  "repo": "owner/repo",
+  "issue": { "action": "create|update", "id": null, "title": "", "body": "" },
+  "branch": { "name": "" },
+  "pr": { "title": "", "body": "" },
+  "createdAt": "ISO"
 }
 ```
 
 ---
 
-## 命令一览
-
-### 认证
-```
-/ghw auth          # OAuth Device Flow（需 CLIENT_ID + SECRET）
-```
-
-### Issue
-```
-/ghw issue n <title>               # 创建 Issue（所有 repo）
-/ghw issue n <title> -r owner/repo  # 创建 Issue（指定 repo）
-/ghw issue ls                       # 列出 Issue（所有 repo）
-/ghw issue ls -r owner/repo         # 列出 Issue（指定 repo）
-/ghw issue ls -s open|closed|all    # 按状态过滤
-/ghw issue s <number> -r owner/repo # 查看 Issue
-/ghw issue u <number> [opts]        # 更新 Issue
-```
-**选项**：
-- `-r, --repo owner/repo` — 指定仓库
-- `-s, --state open|closed|all` — 状态过滤
-- `-a, --assignee user` — 按负责人过滤
-- `-l, --label x,y` — 按标签过滤
-
-### Branch
-```
-/ghw branch n <issue-number> -r owner/repo   # 创建分支（需指定 repo）
-/ghw branch ls -r owner/repo                   # 列出分支
-```
-
-### Pull Request
-```
-/ghw pr n <issue-number> -r owner/repo   # 创建 PR（需指定 repo）
-/ghw pr ls                                 # 列出 PR（所有 repo）
-/ghw pr ls -r owner/repo                   # 列出 PR（指定 repo）
-/ghw pr ls -s open|closed|merged|all       # 按状态过滤
-/ghw pr s <pr-ref>                         # 查看 PR（自动查找）
-/ghw pr m <pr-ref>                         # Merge PR
-```
-
-### Review（两步流程 + Checklist）
+## 标准流程示例
 
 ```
-/ghw review c <pr-ref>      # 认领 Review，留 👀 + 清单
-/ghw review d <pr-ref>      # 完成 Review（验证清单全部 [x]）
-/ghw review ls              # 列出所有待 Review PR
+你: /ghw start ~/code/myproject
+蛋妹: ✅ workdir set, repo: owner/repo
+
+你: /ghw new
+蛋妹: 根据聊天内容生成 Issue 草稿：
+      Title: xxx
+      Body: ...
+      [pending，等待 /ghw confirm]
+      确认吗？
+
+你: y（继续讨论补充细节）
+
+你: /ghw new（再次调用，内容已更新）
+蛋妹: 更新草稿：[新 Title]
+      [pending，等待 /ghw confirm]
+
+你: /ghw fix login-bug
+蛋妹: ✅ Branch fix/login-bug created (rebased on main)
+      [pending，等待 /ghw confirm]
+
+你: /ghw pr
+蛋妹: ✅ Branch pushed. Run /ghw confirm
+
+你: /ghw confirm
+蛋妹: ✅ Issue #45 创建成功
+      ✅ Branch created
+      ✅ PR #78 创建成功
 ```
-
-**Review 流程**：
-1. `review c` → 领取 PR，留 👀 + 清单模板
-2. 人工逐项检查，在 comment 中将 `[ ]` 改为 `[x]`
-3. 全部 [x] 后 → `review d` → 通过
-
-**选项**：
-- `review d <pr-ref> approved` → ✅ 通过
-- `review d <pr-ref> changes` → ❌ 打回
-
-**Review 清单**：
-```
-## Review Checklist
-- [ ] 功能是否符合 Issue 需求描述
-- [ ] 是否有超范围改动
-- [ ] 是否有遗漏内容
-```
-
-### 轮询
-```
-/ghw poll                  # 检查所有 repo
-/ghw poll -r owner/repo    # 只查指定 repo
-```
-
-### 配置
-```
-/ghw config    # 查看当前配置状态
-```
-
----
-
-## 全局选项
-
-| 短 | 长 | 说明 |
-|----|----|------|
-| `-r` | `--repo owner/repo` | 指定仓库 |
-| `-s` | `--state` | 状态过滤 |
-| `-a` | `--assignee` | 负责人 |
-| `-l` | `--label` | 标签 |
-
----
-
-## 速查表
-
-| 命令 | 简写 |
-|------|------|
-| `issue new` | `issue n` |
-| `issue list` | `issue ls` |
-| `issue show` | `issue s` |
-| `issue update` | `issue u` |
-| `branch new` | `branch n` |
-| `branch list` | `branch ls` |
-| `pr new` | `pr n` |
-| `pr list` | `pr ls` |
-| `pr show` | `pr s` |
-| `pr merge` | `pr m` |
-| `review claim` | `review c` |
-| `review done` | `review d` |
-| `review list` | `review ls` |
 
 ---
 
@@ -164,6 +195,7 @@ GitHub 团队协作工作流 skill，支持多仓库。
 ## 实现
 
 - **Token**：PAT 或 OAuth Device Flow
-- **多 Repo**：`GHW_REPOS`（逗号分隔或 JSON 数组）
-- **存储**：`~/.openclaw/github-work/token.json`（0600）
+- **Git 操作**：直接调用本地 git
+- **GitHub API**：REST API v3
+- **存储**：`~/.openclaw/github-work/pending.json`（0600）
 - **零外部依赖**
