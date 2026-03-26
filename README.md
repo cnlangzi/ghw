@@ -30,9 +30,9 @@ cp -r gtw ~/workspace/skills/
 | Command | Description |
 |---------|-------------|
 | `/gtw on <workdir>` | Set workdir + repo in session |
-| `/gtw new [title] [body]` | Issue draft (no API) |
+| `/gtw new` | Issue draft from conversation (no API) |
 | `/gtw update #<id> [title]` | Update issue draft (no API) |
-| `/gtw confirm` | Execute all: issue + branch + PR, then clear |
+| `/gtw confirm` | Execute all: issue + branch + PR, then clear session |
 
 ### Git Operations
 | Command | Description |
@@ -69,11 +69,11 @@ cp -r gtw ~/workspace/skills/
 ```
 # Developer creates PR
 /gtw on ~/code/project
-/gtw new "Add OAuth login" "..."
+/gtw new
 /gtw fix feature/123
   -> coding...
 /gtw push
-/gtw confirm "feat: add oauth"
+/gtw confirm
   -> creates issue + GitHub branch + PR with ghw/ready
 
 # Agent reviews

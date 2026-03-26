@@ -24,8 +24,8 @@ Session-based issue generation, git operations, and auto-driven PR review via CL
 /gtw on <workdir>
     Set workdir and repo in session context. Required first step.
 
-/gtw new [title] [body]
-    Create an issue draft in session context. No API call.
+/gtw new
+    Create an issue draft in session context. Agent fills title/body from conversation. No API call.
 
 /gtw update #<id> [title]
     Update an existing issue draft in session context. No API call.
@@ -35,6 +35,7 @@ Session-based issue generation, git operations, and auto-driven PR review via CL
     - issue (create/update)
     - GitHub branch ref (if branch.name + issue.id)
     - PR (if pr.title)
+    - push (commit + push)
     Then clear session.
 ```
 
@@ -52,8 +53,7 @@ Session-based issue generation, git operations, and auto-driven PR review via CL
     No PR created on GitHub until /gtw confirm.
 
 /gtw push
-    git add -A, show diff. Writes to session.
-    Use /gtw confirm to commit and push.
+    git add -A, show diff summary. Agent generates commit message. /gtw confirm commits and pushes.
 ```
 
 ---
@@ -114,7 +114,7 @@ Review flow:
 ```
 # Developer: create PR via session
 /gtw on ~/code/project
-/gtw new "Add OAuth login" "## Description\n..."
+/gtw new
 /gtw fix feature/123
   -> coding...
 /gtw push
